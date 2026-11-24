@@ -385,11 +385,74 @@
 
 ---
 
+## Phase 9.5 — Public Opt-Out Page (`/x`) — ISOLATED ADD-ON
+
+> **Why this phase exists:** the outbound SMS suffix is `Stop: dhsc.uk/x` (`OPT_OUT_SUFFIX` in
+> `src/lib/validate.ts`), but only the **public API endpoint** `/api/opt-out` was ever built — there
+> is **no rendered page** at `dhsc.uk/x` for a customer to actually visit. Phases 0–9 are complete
+> and proven; this phase adds the missing customer-facing page.
+>
+> **Design mandate — do NOT touch the working app (hard rule for this phase):**
+> - The dashboard, `/api/*` routes, auth guard, queue, provider layer, and the existing SPA are
+>   **frozen**. This phase must not modify them.
+> - The public page is a **standalone, zero-JS HTML page** plus **one small, self-contained Worker
+>   route**. It reuses the already-tested `POST /api/opt-out` handler (which already writes to D1),
+>   so **no opt-out business logic is duplicated** and no existing logic is rewritten.
+> - The independent online route is `/x` — inside the same Worker and origin, so the strict CSP
+>   (`script-src 'self'`, `connect-src 'self'`) and same-origin posting keep working with no CORS
+>   layer. The page posts the same-origin `/api/opt-out` endpoint.
+
+> **Decision to record before coding (ask if unclear — do not guess):**
+> - **Is `/x` the real public path?** `x` is currently a placeholder in the suffix. Confirm the
+>   exact path the customer will use (e.g. `/x`, `/optout`, `/stop`) and that Cloudflare Access will
+>   leave it public (the Access rules are configured in the dashboard, not in this repo). If the
+>   path changes, update `OPT_OUT_SUFFIX` in **both** `src/lib/validate.ts` and `web/src/lib/sms.ts`
+>   in the same change (they are asserted equal by `test/phase8.test.ts`), and keep the SMS budget
+>   note (160 − suffix − 1 space) in `docs/mission.md` §8.4 accurate.
+
+- **9.5.1** Create the standalone page as a static asset, **not** part of the SPA build: e.g.
+  `web/public/x.html` (Vite copies `web/public/*` into `web/dist` verbatim, and `wrangler.jsonc`
+  already serves `web/dist` via the `ASSETS` binding). Self-contained HTML + inline `<style>`,
+  **no JS, no build step, no framework** — so the working SPA bundle is untouched. The page is a
+  simple form: a labelled `tel` input (`name="number"`, `inputmode="tel"`, autocomplete) and a
+  submit button, plus a tiny inline notice that their number will no longer receive messages.
+- **9.5.2** Add **one small route** so `GET /x` returns that page. Register it in `src/routes/`
+  (a new, separate module — e.g. `src/routes/opt-out-page.ts` — called once from `createApp()`),
+  deleting only by adding a line next to the existing `register*Routes(app)` calls. Do **not**
+  edit any existing route file. The handler can either `return c.env.ASSETS.fetch(...)` for the
+  static file or return the HTML string inline; keep the logic trivial (no DB access here).
+- **9.5.3** Make the form post to the **existing** `POST /api/opt-out` (urlencoded) — the handler
+  already accepts `number`/`phone` and already writes to D1 via `addOptOut`. **No new endpoint, no
+  duplicated validation, no change to `opt-outs.ts`.** Render a friendly success/error response;
+  since the page is no-JS, the plain-text/HTML response after posting is what the customer sees.
+  (If a nicer UX is wanted later, a tiny progressive-enhancement script can be a follow-on — but
+  it is **out of scope** for a zero-risk first cut.)
+- **9.5.4** Confirm the auth carving is correct and unchanged: `/x` is **not** under `/api/*`, so
+  the existing guard already ignores it; `PUBLIC_API_PATHS` stays exactly `['/api/opt-out']`.
+  Do **not** widen the public API surface for this phase.
+- **9.5.5** Add a focused test (`test/phase9_5.test.ts` or extend the existing pattern) feeding a
+  `GET /x` request through `createApp()` (200 + contains the form) and asserting the page's post
+  still lands on the same D1-writing handler (valid recipient count moves). Reuse the existing test
+  fakes/helpers — no live provider call.
+- **9.5.6** Update docs in the same change: `docs/tech.md` §9.2 (note the concrete `/x` page path
+  and that it is static + reuses `/api/opt-out`), `docs/mission.md` §3/§8 if the path changed, and
+  add a short line to the Phase 10 checklist verifying the page in production.
+- **Verify:** `npm test` still green (existing counts unchanged except the new cases),
+  `npm run typecheck` + `npm run typecheck:web` + `tsc -p test/tsconfig.json` clean,
+  `npm run build` still emits `web/dist` (now including `x.html`), and a **bounded local** run
+  (`wrangler dev`) shows `GET /x` → `200` with the form, a form post opts a number out and moves
+  the count, and `/api/*` remains guarded exactly as before. **No live provider call.**
+
+---
+
 ## Phase 10 — Polish, Security, Deploy
 
 - **10.1** Confirm the committed `.dev.vars` contains **no live production key**; move the real
   key to `wrangler secret put SENDMODE_ACCESS_KEY`.
 - **10.2** Review rate limiting on the public opt-out route; confirm security headers.
+- **10.2a** Confirm the public opt-out **page** renders in production: `GET dhsc.uk/x` → `200`
+  with the form (outside Cloudflare Access), and a form submit opts a number out and moves the
+  valid recipient count.
 - **10.3** `npm run build` → confirm `web/dist` is produced and served via `ASSETS`.
 - **10.4** `npx wrangler deploy`; smoke-test in production with a single test SMS and a tiny
   (1-chunk) campaign.

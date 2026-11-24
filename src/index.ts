@@ -14,6 +14,7 @@ import { registerBalanceRoutes } from "./routes/balance.js";
 import { registerCampaignRoutes } from "./routes/campaigns.js";
 import { registerTestSmsRoutes } from "./routes/test-sms.js";
 import { registerOptOutRoutes } from "./routes/opt-outs.js";
+import { registerOptOutPageRoutes } from "./routes/opt-out-page.js";
 import type { QueueMessage } from "./queue/messages.js";
 import { handleDispatch } from "./queue/dispatch.js";
 import { handleCancel } from "./queue/cancel.js";
@@ -75,6 +76,10 @@ export function createApp(): Hono<AppEnv> {
   registerCampaignRoutes(app);
   registerTestSmsRoutes(app);
   registerOptOutRoutes(app);
+
+  // Phase 9.5 — the public opt-out page at `/x` (the target of the SMS `Stop: dhsc.uk/x`
+  // suffix). Standalone and outside `/api/*`, so the guard above already ignores it.
+  registerOptOutPageRoutes(app);
 
   return app;
 }

@@ -208,8 +208,9 @@ Plus:
   modal). **Test sends are recorded in History** (flagged as a test send).
 - `GET /api/opt-outs` / `POST /api/opt-outs` / `DELETE /api/opt-outs/:number` — authenticated
   opt-out management (count shown in the header).
-- **Public opt-out route** (no auth) — a page at `dhsc.uk` where a customer submits their
-  phone number. This is the **only** unauthenticated route.
+- **Public opt-out route** (no auth) — the page a customer visits at **`dhsc.uk/x`** (the SMS
+  suffix `Stop: dhsc.uk/x`) to submit their phone number; it posts to `/api/opt-out`. This is the
+  **only** unauthenticated route.
 
 ### Auth rule (non-negotiable)
 
@@ -341,7 +342,13 @@ per `request_id`.
    never opened by accident. JWT **signature** verification is deliberately **not** done in
    the Worker (mission.md §8, still-open) because Access is the only ingress.
 2. **Opt-out exception:** the only unauthenticated route — a single-purpose **public page**
-   (`dhsc.uk` path) where a customer submits their phone number. Scope it tightly (validated
+   at **`dhsc.uk/x`** (the path named by the SMS suffix `Stop: dhsc.uk/x`) where a customer
+   submits their phone number. The page is a **standalone, zero-JS static asset**
+   (`web/public/x.html`, copied verbatim into `web/dist` by the Vite build and served through the
+   `ASSETS` binding; a matching `GET /x` route in `src/routes/opt-out-page.ts` serves the same HTML
+   when assets are absent, e.g. in tests). Its form posts urlencoded `number` straight to the
+   **existing** `POST /api/opt-out` handler — so there is **no duplicated opt-out logic** and **no
+   new endpoint**. Scope it tightly (validated
    input, rate-limited, no data exposure beyond acknowledging the opt-out). Its API path
    (`/api/opt-out`) is the sole entry in `PUBLIC_API_PATHS`; it skips auth but is
    **rate-limited per client IP** (fixed-window in-memory limiter, best-effort/per-isolate —
