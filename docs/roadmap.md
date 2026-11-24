@@ -122,17 +122,43 @@
 
 ---
 
-## Phase 5 — Auth & Middleware
+## Phase 5 — Auth & Middleware ✅ DONE
 
-- **5.1** `src/lib/auth.ts`: middleware that reads the Cloudflare Access identity
-  (`Cf-Access-Jwt-Assertion` / `Cf-Access-Authenticated-User-Email`) and **rejects
-  unauthenticated requests with `401`**; for local dev, support a dev bypass flag.
-- **5.2** Apply the auth middleware to the whole `/api/*` group in `src/index.ts`, with an
-  explicit carve-out list for the public opt-out route only.
-- **5.3** Add baseline hardening middleware: security headers, request-size limit, simple
-  in-memory/IP rate limiting for the public route.
-- **Verify:** unauthenticated `GET /api/balance` → `401`; with a dev identity → passes
-  through. Confirm no `/api/*` route is reachable anonymously.
+> **Decisions made while building (recorded here, not guessed):**
+> - **Trust the Access header, don't verify the JWT.** Per `mission.md` §8 "Access JWT
+>   verification" (still-open; assumed), Cloudflare Access is the *only* ingress, so the
+>   Worker trusts `Cf-Access-Authenticated-User-Email` / `Cf-Access-Jwt-Assertion` and does
+>   **not** re-verify the signature. Revisit if the Worker is ever exposed beyond Access.
+> - **Identity = "either Access header present".** Email header gives the email; a bare JWT
+>   assertion (no email) is still accepted (`email: null`, `gated: true`). Stored on the
+>   context as `identity` (Hono `ContextVariableMap` augmentation) so routes never re-parse
+>   headers.
+> - **Dev bypass is opt-in and explicit.** `DEV_AUTH_BYPASS === "true"` accepts the request
+>   as `DEV_AUTH_EMAIL` (default `dev@localhost`). Absent/`"false"` ⇒ the live gate is
+>   closed, so production can never be opened by accident.
+> - **Carve-out is a deny-by-default list.** `PUBLIC_API_PATHS = ['/api/opt-out']`; every
+>   other `/api/*` path is guarded, so a new route is protected unless explicitly listed.
+>   The opt-out handler itself arrives in 6.7 — 5.2 only establishes the guard + limiter.
+> - **Hardening uses Hono built-ins** (`secureHeaders`, `bodyLimit`) — no new dependency
+>   (hard rule #1). The **in-memory rate limiter** is hand-rolled (per-isolate, best-effort,
+>   documented as such); swap the store for a Cloudflare-native limiter later without
+>   changing callers.
+> - **`createApp()` factory** exported so tests build a fresh app (Hono freezes its matcher
+>   on first request, so probe routes must be added before use).
+
+- **5.1 ✅** `src/lib/auth.ts`: `resolveAccessIdentity` (pure), `isDevBypassEnabled`,
+  `createRequireAuth<Env>()` middleware → **401** when anonymous, else sets `identity`;
+  `getIdentity(c)` for handlers.
+- **5.2 ✅** `src/index.ts`: one guard on `/api/*` with the explicit `PUBLIC_API_PATHS`
+  carve-out (deny-by-default); public paths are rate-limited instead of authenticated.
+- **5.3 ✅** `src/lib/hardening.ts`: security headers (tight CSP, `X-Frame-Options: DENY`,
+  `nosniff`, referrer policy, COOP), a 64 KiB `bodyLimit`, and a fixed-window in-memory
+  IP rate limiter (`clientIp` prefers `CF-Connecting-IP` → `X-Forwarded-For` → `unknown`).
+- **Verify ✅** `npm test` → **59/59 pass** (37 from Phase 4 + 22 in `test/phase5.test.ts`):
+  anonymous `GET /api/health` and `GET /api/balance` → **401**; email/JWT/dev-bypass → 200;
+  unknown authenticated `/api/*` → 404 (routing reached, not 401); opt-out carve-out reachable
+  without auth but 429 after the quota; header/body-limit/prune/clip checks. `npx tsc --noEmit`
+  (src) and `-p test/tsconfig.json` clean; `wrangler deploy --dry-run` bundles.
 
 ---
 

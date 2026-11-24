@@ -102,6 +102,10 @@ Secrets (set with `wrangler secret put`, never committed):
 
 - `SENDMODE_ACCESS_KEY` — Sendmode API access key.
 
+Local-dev-only auth bypass (never set in production): `DEV_AUTH_BYPASS="true"` (optionally
+`DEV_AUTH_EMAIL`) in a gitignored `.dev.vars` lets `wrangler dev` / tests pass the auth guard
+without Cloudflare Access. See `src/lib/auth.ts` and Phase 5 in `roadmap.md`.
+
 ---
 
 ## 4. Data Model (D1 / SQLite)
@@ -315,10 +319,19 @@ per `request_id`.
 
 1. **Login wall (Cloudflare Access, password-based Zero Trust):** all traffic to the
    dashboard (`dhsc.uk`) and `/api/*` is authenticated. Cloudflare Access handles the
-   identity; the Worker trusts the Access identity header on authenticated requests.
+   identity; the Worker **trusts** the Access identity header (`Cf-Access-Authenticated-User-Email`
+   / `Cf-Access-Jwt-Assertion`) on authenticated requests. The guard is **one middleware**
+   (`src/lib/auth.ts`) applied to the whole `/api/*` group in `src/index.ts`; it is
+   **deny-by-default** with an explicit public carve-out list (`PUBLIC_API_PATHS`). A local
+   dev bypass (`DEV_AUTH_BYPASS === "true"`) is opt-in and defaults off so the live gate is
+   never opened by accident. JWT **signature** verification is deliberately **not** done in
+   the Worker (mission.md §8, still-open) because Access is the only ingress.
 2. **Opt-out exception:** the only unauthenticated route — a single-purpose **public page**
    (`dhsc.uk` path) where a customer submits their phone number. Scope it tightly (validated
-   input, rate-limited, no data exposure beyond acknowledging the opt-out).
+   input, rate-limited, no data exposure beyond acknowledging the opt-out). Its API path
+   (`/api/opt-out`) is the sole entry in `PUBLIC_API_PATHS`; it skips auth but is
+   **rate-limited per client IP** (fixed-window in-memory limiter, best-effort/per-isolate —
+   see `src/lib/hardening.ts`).
 3. **Secrets:** provider key only via `wrangler secret put`; `.dev.vars` is gitignored. The
    committed `.dev.vars` must never contain a **live production key** — the value currently
    present looks live, so treat moving it to `wrangler secret` as a pre-deploy task
