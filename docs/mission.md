@@ -75,8 +75,8 @@ surface except opt-out**.
 These are deliberately **out of scope**; do not build them unless the mission changes:
 
 - Multi-tenant support (one restaurant, one account).
-- A CRM / contact editor / import pipeline. The CSV is pre-cleaned and static; it is seeded
-  once, not managed in-app.
+- A CRM / contact editor / import pipeline. The CSV is static; it is seeded once (only valid
+  UK mobiles are kept, dirty rows are dropped), not managed in-app.
 - Rich delivery analytics, per-recipient delivery receipts, or provider webhooks. (The API
   supports webhooks, but consuming them is **deferred** — terminal state is provider
   acceptance. See `mission.md` §8.)
@@ -134,8 +134,9 @@ These are now **settled facts**. Treat them as requirements, not preferences.
    suffix (e.g. `Stop: dhsc.uk/x`) is **appended first**, and the *remaining* character budget
    is what the operator may write. Emojis/non-GSM characters flip the message to UCS-2, which
    changes the budget and doubles cost — the estimator must show this live.
-5. **Audience:** the cleaned CSV has **~8,000–8,500 records**. At 100 per chunk that is
-   **~80–85 `audience_chunks` rows**. Chunk size stays 100 (matches the provider's 100-cap).
+5. **Audience:** the CSV has **8,093 data rows**; after dropping the 33 dirty rows the
+   **8,060 clean** UK mobiles seed **81 `audience_chunks` rows** (80×100 + 1×60). Chunk size
+   stays 100 (matches the provider's 100-cap).
 6. **Test SMS:** **recorded in History** like any other campaign (marked as a test send), so
    the operator can see what was tested.
 7. **Webhooks:** *deferred / undecided.* For now the terminal state is **"accepted by the

@@ -3,5 +3,9 @@
 node_modules/
 .wrangler/
 
-# Cleaned audience CSV (customer PII) — seeded once, never committed.
+# Audience CSV (customer PII) — seeded once by scripts/seed-audience.ts, never committed.
 docs/data.csv
+
+# Generated audience seed SQL (contains customer PII) — regenerate with
+# `npm run seed`, never commit.
+scripts/audience_chunks.sql

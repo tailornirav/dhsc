@@ -12,8 +12,9 @@ DHSC ("Dilli Haat SMS Campaign") is a **login-protected web dashboard** that let
 restaurant** send **bulk SMS campaigns** (immediately or scheduled) to its customer list via
 the **Sendmode API**, running entirely on **Cloudflare Workers + D1 + Queues at $0/month**.
 
-The customer list is a **pre-cleaned, static CSV** seeded once into a pre-chunked table — it
-is **not** edited in the app.
+The customer list is a **static CSV** (seeded once into a pre-chunked table); it is **not**
+edited in the app. The file is **not** perfectly clean — the seeder keeps only valid UK mobiles
+and drops the rest (see below).
 
 ---
 
@@ -28,7 +29,7 @@ is **not** edited in the app.
 | Provider API contract (authoritative for Sendmode). | `docs/sms-api.md` |
 | Worker config (Worker, assets, D1, Queues bindings). | `wrangler.jsonc` |
 | Drizzle schema + migrations. | `src/db/schema.ts`, `src/db/migrations/` |
-| One-time CSV → `audience_chunks` seeder. | `scripts/seed-audience.ts` |
+| One-time CSV → `audience_chunks` seeder (keeps only clean `+447…` rows). | `scripts/seed-audience.ts` |
 | Worker app + queue consumer. | `src/index.ts`, `src/routes/`, `src/services/`, `src/queue/`, `src/lib/` |
 | React + Vite frontend. | `web/` (builds to `web/dist`, served via the `ASSETS` binding) |
 
@@ -93,7 +94,7 @@ irreversible spend. Breaking one silently breaks the product.
   dashboard and all `/api/*`. The **only** public route is the opt-out page.
 - **Provider base URL:** `https://sms-rest.sendmode.dev` (paths `/3.0/...`).
 - **Bulk recipient cap:** 100 numbers per provider call → matches **audience chunk size 100**
-  (`~80–85` chunks for the `~8,000–8,500`-record CSV).
+  (**81** chunks for the **8,060**-clean-number CSV: 80×100 + 1×60).
 - **Message limit:** **160 chars is the hard max** (GSM-7); the opt-out suffix is appended
   first and counts against it. Emojis → UCS-2 changes the budget and cost.
 - **Queue tuning:** `max_batch_size: 5`, `max_concurrency: 2`, `max_retries: 5`, DLQ

@@ -21,6 +21,7 @@
 - **0.4 ✅** **160 chars is a hard max** (GSM-7); suffix is appended first, remaining budget is
   the operator's. Emoji → UCS-2 changes budget/cost.
 - **0.5 ✅** CSV has **~8,000–8,500 records** → **~80–85 chunks** at 100/chunk.
+  *(Resolved in Phase 3: 8,093 data rows → 8,060 clean → 81 chunks.)*
 - **0.6 ✅** **Test SMS appears in History** (marked as a test send).
 - **0.7 ⏸ Webhooks deferred:** terminal state is provider acceptance (`request_id`). Do not
   build webhook consumption now.
@@ -61,15 +62,23 @@
 
 ## Phase 3 — Audience Seeding
 
-- **3.1** Write `scripts/seed-audience.ts`: read the cleaned CSV (`name,phone`), normalize to
-  E.164 (`+44…`), chunk into groups of **100**, and generate a SQL file (or prepared inserts)
-  for `audience_chunks` with `chunk_index`, `recipient_count`, `mobile_numbers_json`.
-- **3.2** Ensure the script is idempotent (clear/`INSERT OR REPLACE`) and never exceeds D1's
-  100-bound-parameter rule (each row is one statement; batch many statements, not many
-  placeholders).
-- **3.3** Seed locally, then remotely.
-- **Verify:** `select count(*) from audience_chunks` and `sum(recipient_count)` match the CSV's
-  number count; spot-check one `mobile_numbers_json` parses to 100 valid `+44…` numbers.
+> **Reality vs docs (resolved):** the file is `docs/data.csv` with header
+> `customer_name,phone_e164,visit_count` (not the roadmap's `name,phone`). It was described as
+> "pre-cleaned" but is **not** fully clean: of 8,093 data rows, **8,060** are clean UK mobiles
+> (`+44` + 7 + 9 digits), **32** have a duplicated `44` (`+44447…`) and **1** is a structurally
+> corrupt row (`"BON ,+44ARRIOT ",7725434197,0`). **Decision: seed only the 8,060 clean rows**;
+> all 33 dirty rows are dropped and logged by the seeder (no guessing on who gets paid SMS).
+
+- **3.1 ✅** `scripts/seed-audience.ts`: reads `docs/data.csv`, keeps only `/^\+447\d{9}$/`,
+  chunks into groups of **100**, and emits idempotent SQL for `audience_chunks` with
+  `chunk_index`, `recipient_count`, `mobile_numbers_json`.
+- **3.2 ✅** Idempotent (`DELETE` then one `INSERT OR REPLACE` per row; `chunk_index` UNIQUE) and
+  within D1 limits: each row is a single statement binding 3 values (the JSON array is one text
+  value, never 100 placeholders).
+- **3.3 ✅** Seeded locally, then remotely.
+- **Verify ✅** `count(*) = 81`, `sum(recipient_count) = 8060` (== clean CSV rows) on both local
+  and remote; every number valid `+44…` and distinct (`json_each` sweep: 8060/8060 valid, 8060
+  distinct); chunk 0 `json_array_length = 100`, chunk 80 = 60; re-running the seed is a no-op.
 
 ---
 

@@ -106,15 +106,20 @@ Secrets (set with `wrangler secret put`, never committed):
 
 ## 4. Data Model (D1 / SQLite)
 
-The audience CSV is **pre-cleaned and static** with **~8,000–8,500 records**. Do **not**
-store thousands of contact rows and chunk at runtime. Instead, a one-time local Node script
-chunks the CSV into rows of **100** numbers (→ **~80–85 rows**) and seeds `audience_chunks`.
+The audience CSV is **static** (seeded once, never edited in-app). Its real shape is
+`docs/data.csv` with header `customer_name,phone_e164,visit_count` and **8,093 data rows**. It is
+**not** perfectly clean: **8,060** rows are clean UK mobiles (`+44` + `7` + 9 digits), while **33**
+are dirty (32 with a duplicated `44`, e.g. `+44447…`; 1 structurally corrupt). The seeder keeps
+only the **8,060 clean rows** and drops the rest (logged, never guessed). Do **not** store
+thousands of contact rows and chunk at runtime. Instead, a one-time local Node script
+(`scripts/seed-audience.ts`) chunks the clean numbers into rows of **100** (→ **81 rows**:
+80 full chunks of 100 plus 1 of 60) and seeds `audience_chunks`.
 
 The canonical schema (Drizzle `sqliteTable` definitions mirror these; drizzle-kit emits the
 migrations):
 
 ```sql
--- Pre-chunked static audience (~80–85 rows for ~8,000–8,500 numbers)
+-- Pre-chunked static audience (81 rows: 80×100 + 1×60 for 8,060 clean numbers)
 CREATE TABLE audience_chunks (
   id              INTEGER PRIMARY KEY AUTOINCREMENT,
   chunk_index     INTEGER NOT NULL UNIQUE,

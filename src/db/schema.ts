@@ -9,7 +9,7 @@ import { index, integer, sqliteTable, text } from "drizzle-orm/sqlite-core";
  */
 
 /**
- * Pre-chunked, static audience (~80–85 rows for ~8,000–8,500 numbers).
+ * Pre-chunked, static audience (81 rows: 80×100 + 1×60 for 8,060 clean numbers).
  * Seeded once by `scripts/seed-audience.ts`; never edited in-app.
  */
 export const audienceChunks = sqliteTable("audience_chunks", {
