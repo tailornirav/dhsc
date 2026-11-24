@@ -170,6 +170,40 @@ export class FakeD1 {
         )
         .map((b) => ({ id: b.id, sendmode_request_id: b.sendmode_request_id }));
     }
+    // --- Phase 7 (queue consumer) reads -------------------------------------------------
+    if (q.startsWith("SELECT id, name, sender_id, message, mode, schedule_date, status FROM campaigns WHERE id = ?")) {
+      return this.campaigns.filter((c) => c.id === params[0]);
+    }
+    if (q.startsWith("SELECT id, campaign_id, chunk_index, status FROM campaign_batches WHERE id = ?")) {
+      return this.batches
+        .filter((b) => b.id === params[0])
+        .map((b) => ({
+          id: b.id,
+          campaign_id: b.campaign_id,
+          chunk_index: b.chunk_index,
+          status: b.status,
+        }));
+    }
+    if (q.startsWith("SELECT id, campaign_id, status, sendmode_request_id FROM campaign_batches WHERE id = ?")) {
+      return this.batches
+        .filter((b) => b.id === params[0])
+        .map((b) => ({
+          id: b.id,
+          campaign_id: b.campaign_id,
+          status: b.status,
+          sendmode_request_id: b.sendmode_request_id,
+        }));
+    }
+    if (q.startsWith("SELECT status, invalid_numbers_json FROM campaign_batches WHERE campaign_id = ?")) {
+      return this.batches
+        .filter((b) => b.campaign_id === params[0])
+        .map((b) => ({ status: b.status, invalid_numbers_json: b.invalid_numbers_json }));
+    }
+    if (q.startsWith("SELECT mobile_numbers_json FROM audience_chunks WHERE chunk_index = ?")) {
+      return this.audienceChunks
+        .filter((c) => c.chunk_index === params[0])
+        .map((c) => ({ mobile_numbers_json: c.mobile_numbers_json }));
+    }
     throw new Error(`FakeD1: unhandled read statement: ${q}`);
   }
 
@@ -229,15 +263,64 @@ export class FakeD1 {
       return 1;
     }
     if (q.startsWith("UPDATE campaign_batches SET status = 'CANCELLED'")) {
-      let changed = 0;
-      for (const b of this.batches) {
-        if (b.campaign_id === params[1] && b.status === "PENDING") {
-          b.status = "CANCELLED";
-          b.updated_at = params[0] as string;
-          changed++;
+      // Flow B (roadmap 6.5): retire every still-PENDING batch for a campaign.
+      if (q.includes("WHERE campaign_id = ? AND status = 'PENDING'")) {
+        let changed = 0;
+        for (const b of this.batches) {
+          if (b.campaign_id === params[1] && b.status === "PENDING") {
+            b.status = "CANCELLED";
+            b.updated_at = params[0] as string;
+            changed++;
+          }
         }
+        return changed;
       }
-      return changed;
+      // Phase 7 (queue consumer): retire one batch by id.
+      const row = this.batches.find((b) => b.id === params[1]);
+      if (!row) return 0;
+      row.status = "CANCELLED";
+      row.updated_at = params[0] as string;
+      return 1;
+    }
+    if (q.startsWith("UPDATE campaign_batches SET status = 'FAILED'")) {
+      // Phase 7 (dispatch): mark one batch terminally FAILED with a reason.
+      const row = this.batches.find((b) => b.id === params[2]);
+      if (!row) return 0;
+      row.status = "FAILED";
+      row.error_message = params[0] as string;
+      row.updated_at = params[1] as string;
+      return 1;
+    }
+    if (q.startsWith("UPDATE campaign_batches SET status = ?")) {
+      // Phase 7 (dispatch success): persist SENT/SCHEDULED + request id + invalid numbers.
+      const row = this.batches.find((b) => b.id === params[4]);
+      if (!row) return 0;
+      row.status = params[0] as string;
+      row.sendmode_request_id = params[1] as string;
+      row.invalid_numbers_json = params[2] as string;
+      row.updated_at = params[3] as string;
+      return 1;
+    }
+    if (q.startsWith("UPDATE campaigns SET completed_batches = ?")) {
+      // Phase 7 (in-flight recompute): counters only, status left untouched.
+      const row = this.campaigns.find((c) => c.id === params[4]);
+      if (!row) return 0;
+      row.completed_batches = params[0] as number;
+      row.failed_batches = params[1] as number;
+      row.invalid_count = params[2] as number;
+      row.updated_at = params[3] as string;
+      return 1;
+    }
+    if (q.startsWith("UPDATE campaigns SET status = ?, completed_batches = ?")) {
+      // Phase 7 (terminal recompute): settle the campaign status + counters together.
+      const row = this.campaigns.find((c) => c.id === params[5]);
+      if (!row) return 0;
+      row.status = params[0] as string;
+      row.completed_batches = params[1] as number;
+      row.failed_batches = params[2] as number;
+      row.invalid_count = params[3] as number;
+      row.updated_at = params[4] as string;
+      return 1;
     }
     if (q.startsWith("UPDATE campaigns SET status = 'CANCELLED'")) {
       const row = this.campaigns.find((c) => c.id === params[1]);
@@ -279,26 +362,50 @@ export class FakeQueue {
 /** Capture the last provider request and script its response. */
 export interface ProviderStub {
   calls: Array<{ url: string; method: string }>;
+  /** Parsed JSON bodies, one per call (aligned with `calls`). */
+  bodies: unknown[];
   /** The balance value served for `/balance` (mutate between calls). */
   balance: number;
+  /** The `request_id` returned by bulk send/schedule (mutate to make it per-call unique). */
+  requestId: string;
+  /** Invalid numbers the bulk endpoint reports (echoed back in the response). */
+  invalidNumbers: string[];
   /** Force a non-2xx status (for provider-error tests); `undefined` restores success. */
   failStatus: number | undefined;
+  /** When true, a 2xx body is returned with `is_successful: false` (provider rejection). */
+  rejectSuccess: boolean;
+  /**
+   * Per-path forced failure statuses. Keyed by a URL substring (e.g. `"/schedule"`); when a
+   * call's URL contains the key, that status is used instead of `failStatus`. Lets a test fail
+   * one endpoint while others succeed.
+   */
+  failFor: Record<string, number>;
   restore(): void;
 }
 
 /**
- * Install a global `fetch` stub that answers `/3.0/balance` (and any other path) with a
- * plausible Sendmode JSON body. Returns a controller to tweak the balance/failure and to
- * restore the original `fetch`.
+ * Install a global `fetch` stub that answers the whole Sendmode surface the Phase 6/7 code
+ * uses: `/3.0/balance`, `POST /3.0/send/bulk`, `POST /3.0/schedule/bulk`, and
+ * `DELETE /3.0/schedule`. Returns a controller to tweak the balance/failure and to restore the
+ * original `fetch`.
+ *
+ * Every response carries the shared base fields (`is_successful`, `error_message`,
+ * `accept_date`) so the service layer's validators accept it.
  */
 export function stubProvider(initialBalance = 100_000): ProviderStub {
   const original = globalThis.fetch;
   const calls: ProviderStub["calls"] = [];
+  const bodies: unknown[] = [];
 
   const stub: ProviderStub = {
     calls,
+    bodies,
     balance: initialBalance,
+    requestId: "req-0001",
+    invalidNumbers: [],
     failStatus: undefined,
+    rejectSuccess: false,
+    failFor: {},
     restore() {
       globalThis.fetch = original;
     },
@@ -309,12 +416,68 @@ export function stubProvider(initialBalance = 100_000): ProviderStub {
     const method = (init?.method ?? "GET").toUpperCase();
     calls.push({ url, method });
 
-    if (stub.failStatus !== undefined) {
+    let body: unknown = null;
+    if (typeof init?.body === "string") {
+      try {
+        body = JSON.parse(init.body);
+      } catch {
+        body = null;
+      }
+    }
+    bodies.push(body);
+
+    // A per-path forced failure wins over the global one.
+    const forced = Object.entries(stub.failFor).find(([key]) => url.includes(key))?.[1];
+    const status = forced ?? stub.failStatus;
+    if (status !== undefined) {
       return new Response(
         JSON.stringify({ is_successful: false, error_message: "provider down", accept_date: null }),
-        { status: stub.failStatus },
+        { status },
       );
     }
+
+    if (stub.rejectSuccess) {
+      return new Response(
+        JSON.stringify({ is_successful: false, error_message: "rejected", accept_date: null }),
+        { status: 200 },
+      );
+    }
+
+    // Balance endpoint.
+    if (url.includes("/balance")) {
+      return new Response(
+        JSON.stringify({
+          balance: stub.balance,
+          is_successful: true,
+          error_message: null,
+          accept_date: "2026-01-01T00:00:00Z",
+        }),
+        { status: 200 },
+      );
+    }
+
+    // Bulk send / schedule.
+    if (url.includes("/send/bulk") || url.includes("/schedule/bulk")) {
+      return new Response(
+        JSON.stringify({
+          is_successful: true,
+          error_message: null,
+          accept_date: "2026-01-01T00:00:00Z",
+          invalid_mobile_numbers: stub.invalidNumbers,
+          request_id: stub.requestId,
+        }),
+        { status: 200 },
+      );
+    }
+
+    // Cancellation of a scheduled job.
+    if (url.includes("/schedule") && method === "DELETE") {
+      return new Response(
+        JSON.stringify({ is_successful: true, error_message: null, accept_date: "2026-01-01T00:00:00Z" }),
+        { status: 200 },
+      );
+    }
+
     return new Response(
       JSON.stringify({
         balance: stub.balance,

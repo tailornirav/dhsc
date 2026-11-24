@@ -15,6 +15,8 @@ import { registerCampaignRoutes } from "./routes/campaigns.js";
 import { registerTestSmsRoutes } from "./routes/test-sms.js";
 import { registerOptOutRoutes } from "./routes/opt-outs.js";
 import type { QueueMessage } from "./queue/messages.js";
+import { handleDispatch } from "./queue/dispatch.js";
+import { handleCancel } from "./queue/cancel.js";
 
 // Re-exported for back-compat: the Phase 5 tests import `type Env` from here.
 export type { Env, AppEnv } from "./env.js";
@@ -79,12 +81,85 @@ export function createApp(): Hono<AppEnv> {
 
 const app = createApp();
 
+/**
+ * Delay between provider calls within a batch (tech.md §6, "Consumer entrypoint"). Messages are
+ * processed **sequentially** with a small pause so a burst of 5 dispatches does not hit the
+ * provider all at once (the queue's `max_concurrency: 2` is the hard ceiling; this is the gentle
+ * in-batch pacing). Kept tiny so the invocation stays well inside the CPU budget.
+ */
+const INTER_MESSAGE_DELAY_MS = 200;
+
+/** Sleep helper — `scheduler.wait` is not available on all compat dates, so use a timer. */
+function delay(ms: number): Promise<void> {
+  return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+/**
+ * Queue consumer: route each message by `type`, process them sequentially, and apply the
+ * retry/ack policy (roadmap 7.3–7.5).
+ *
+ * - `DISPATCH_BATCH` → send/schedule one chunk (tech.md Flow C).
+ * - `CANCEL_BATCH` → delete one scheduled provider job (tech.md Flow C).
+ *
+ * The per-message handler decides ack-vs-retry; a transient provider failure returns
+ * `{ action: 'retry', delaySeconds }` and we call `msg.retry({ delaySeconds })`, otherwise
+ * `msg.ack()`. An **unknown** `type` is acked (a malformed message must not poison the queue
+ * and loop until the DLQ). A thrown error is caught and retried with backoff so one bad message
+ * cannot drop the whole batch.
+ */
 export default {
   fetch: app.fetch,
-  async queue(_batch: MessageBatch<QueueMessage>, _env: Env): Promise<void> {
-    // No-op consumer for now; routing by message `type` lands in Phase 7.
+  async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
+    const sendmode = { accessKey: env.SENDMODE_ACCESS_KEY };
+
+    for (let i = 0; i < batch.messages.length; i += 1) {
+      const msg = batch.messages[i];
+      if (!msg) continue;
+      if (i > 0) await delay(INTER_MESSAGE_DELAY_MS);
+
+      try {
+        const outcome = await routeMessage(msg.body, env, sendmode, msg.attempts);
+        if (outcome.action === "retry") {
+          msg.retry({ delaySeconds: outcome.delaySeconds });
+        } else {
+          msg.ack();
+        }
+      } catch {
+        // A handler bug must not silently drop the send: retry with backoff so it is visible
+        // (and eventually lands in the DLQ) rather than being lost.
+        const attempt = Math.max(1, msg.attempts);
+        msg.retry({ delaySeconds: 10 * attempt });
+      }
+    }
   },
 };
+
+/** Route one message body to its handler and normalize the outcome. */
+async function routeMessage(
+  body: QueueMessage,
+  env: Env,
+  sendmode: { accessKey: string },
+  attempts: number,
+): Promise<{ action: "ack" | "retry"; delaySeconds: number }> {
+  switch (body.type) {
+    case "DISPATCH_BATCH": {
+      const outcome = await handleDispatch(body, { db: env.DB, sendmode }, attempts);
+      return outcome.action === "retry"
+        ? { action: "retry", delaySeconds: outcome.delaySeconds }
+        : { action: "ack", delaySeconds: 0 };
+    }
+    case "CANCEL_BATCH": {
+      const outcome = await handleCancel(body, { db: env.DB, sendmode }, attempts);
+      return outcome.action === "retry"
+        ? { action: "retry", delaySeconds: outcome.delaySeconds }
+        : { action: "ack", delaySeconds: 0 };
+    }
+    default:
+      // Exhaustiveness: `body` is a discriminated union, so `never` here means we handled all
+      // known types. Anything else (a malformed payload) is acked to avoid a poison loop.
+      return { action: "ack", delaySeconds: 0 };
+  }
+}
 
 // Re-exported so tests and later phases can reuse a fresh app without the default export.
 export { app };

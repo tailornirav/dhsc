@@ -224,19 +224,55 @@
 
 ---
 
-## Phase 7 — Queue Consumer
+## Phase 7 — Queue Consumer ✅ DONE
 
-- **7.1** `src/queue/dispatch.ts`: `DISPATCH_BATCH` handler with the idempotency + cancel
-  race guards from `tech.md` Flow C.
-- **7.2** `src/queue/cancel.ts`: `CANCEL_BATCH` handler.
-- **7.3** Wire the `queue()` export in `src/index.ts` to route by `type`.
-- **7.4** Implement retry policy (`msg.retry({ delaySeconds: 10 * attempts })` on
-  429/5xx/network; `ack` on 400/401 with `FAILED`).
-- **7.5** Implement campaign-total recomputation → terminal status
-  (`SENT`/`SCHEDULED`/`PARTIAL_FAILURE`/`CANCELLED`).
-- **Verify:** with a mocked provider, run a local queue (`wrangler dev` + queue producer
-  simulation) and assert: batches transition correctly, cancelling mid-flight skips sends,
-  retries fire on 5xx, and campaign reaches the right terminal status.
+> **Decisions made while building (recorded here, not guessed):**
+> - **One handler file per message type + a shared status module.** `src/queue/dispatch.ts`
+>   owns `DISPATCH_BATCH`, `src/queue/cancel.ts` owns `CANCEL_BATCH`, and
+>   `src/queue/campaign-status.ts` owns the shared "is this campaign finished, and how did it
+>   end?" recomputation. Keeping the recompute in one place means both paths can never disagree
+>   about when a campaign settles.
+> - **Handlers are pure over an injected `db` + `sendmode` config and return `ack`/`retry`.**
+>   The handler does **not** touch the `Message`; `queue()` in `src/index.ts` maps the returned
+>   outcome to `msg.ack()` / `msg.retry({ delaySeconds })`. That keeps every branch
+>   trivially unit-testable against a fake D1 + stubbed provider (no Worker runtime).
+> - **Recompute from batch rows, not optimistic counters.** Each handler re-reads the batch
+>   rows and derives `completed_batches`/`failed_batches`/`invalid_count` + the terminal status
+>   in one write. This is what makes retries and out-of-order delivery safe (hard rule #11):
+>   D1 batch state is the only trustworthy source.
+> - **Terminal rules:** any `PENDING` left ⇒ the campaign stays in flight (status untouched,
+>   counters refreshed). Otherwise: any `CANCELLED` ⇒ `CANCELLED` (cancellation is sticky);
+>   else any `FAILED` ⇒ `PARTIAL_FAILURE`; else any `SCHEDULED` ⇒ `SCHEDULED`; else `SENT`.
+> - **Retry policy is exactly `10 * attempts` seconds** (roadmap 7.4) for `429`/`5xx`/network;
+>   `400`/`401`/invalid-2xx/is_successful:false fail the batch terminally and `ack`. A thrown
+>   handler error is caught and retried with the same backoff so a bug cannot silently drop a
+>   send (and eventually lands in the DLQ).
+> - **Cancel is idempotent and fail-safe.** A `DELETE` that the provider refuses
+>   (`400`/`401`/is_successful:false) retires the batch locally anyway — the operator already
+>   chose to stop, so the campaign must not hang in `CANCELLING` forever.
+> - **Missing rows / unknown `type` are acked, not retried**, so a malformed or stale message
+>   can never poison the queue and loop until the DLQ. Messages are processed **sequentially**
+>   with a 200 ms gap (tech.md §6) to pace provider calls within the batch.
+
+- **7.1 ✅** `src/queue/dispatch.ts`: `DISPATCH_BATCH` with the idempotency guard (non-`PENDING`
+  ⇒ ack+skip) and the cancel race guard (`CANCELLING`/`CANCELLED` ⇒ batch `CANCELLED`, skip).
+- **7.2 ✅** `src/queue/cancel.ts`: `CANCEL_BATCH` → `DELETE /3.0/schedule` with the bare
+  `Authorization` header + JSON body; idempotent on an already-`CANCELLED` batch.
+- **7.3 ✅** `queue()` in `src/index.ts` routes by `type` (unknown ⇒ ack), processes the batch
+  sequentially with a 200 ms inter-message delay, and applies the returned ack/retry decision.
+- **7.4 ✅** Retry policy: `msg.retry({ delaySeconds: 10 * attempts })` on `429`/`5xx`/network;
+  `ack` + `FAILED` on `400`/`401` (and on `200`+`is_successful:false`).
+- **7.5 ✅** `src/queue/campaign-status.ts` recomputes the campaign total after every batch and
+  settles it to `SENT`/`SCHEDULED`/`PARTIAL_FAILURE`/`CANCELLED` once no `PENDING` remains.
+- **Verify ✅** `npm test` → **97/97 pass** (**19 in `test/phase7.test.ts`** against a fake D1 +
+  stubbed provider, driving the real `worker.queue()`): dispatch sends/schedules and persists
+  `SENT`/`SCHEDULED` + `request_id` + invalid numbers; the campaign stays in flight until the
+  last batch and then settles (`SENT`, `SCHEDULED`, `PARTIAL_FAILURE`); a re-delivered batch and
+  a `CANCELLING` campaign never reach the provider; `5xx`/`429`/network retry with `10 * attempts`
+  and leave the batch `PENDING`; `400` and `200`+`is_successful:false` fail the batch terminally;
+  a test send uses its inline recipient; `CANCEL_BATCH` deletes by `request_id` and settles, but
+  a still-live `SCHEDULED` sibling keeps the campaign in `CANCELLING`; unknown `type` and missing
+  rows are acked. `npx tsc --noEmit` (src) and `-p test/tsconfig.json` clean.
 
 ---
 

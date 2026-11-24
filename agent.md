@@ -38,8 +38,8 @@ and drops the rest (see below).
 disagree, fix both in the same change.
 
 > Note: the repo is no longer bootstrapping — `src/`, `src/routes/`, `src/services/`,
-> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–6 are
-> complete (see `docs/roadmap.md`); the next step is Phase 7 (queue consumer).
+> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–7 are
+> complete (see `docs/roadmap.md`); the next step is Phase 8 (frontend shell).
 
 ---
 
