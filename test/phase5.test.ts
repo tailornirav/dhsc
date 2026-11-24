@@ -179,13 +179,15 @@ test("isPublicApiPath: matches the opt-out path and its sub-paths, not siblings"
   assert.equal(isPublicApiPath("/api/opt-outish"), false);
 });
 
-test("public carve-out: an /api/opt-out route is reachable without auth", async () => {
-  // A route on a fresh app inherits the group middleware. The real handler lands in Phase
-  // 6.7; this proves the carve-out is live in Phase 5.
+test("public carve-out: an /api/opt-out sub-path is reachable without auth", async () => {
+  // A route on a fresh app inherits the group middleware. The real `POST /api/opt-out`
+  // handler now exists (Phase 6.7); probe a sub-path instead so this still proves the
+  // carve-out is general (it matches `/api/opt-out` *and* its sub-paths) rather than
+  // colliding with the registered handler.
   const publicApp = createApp();
-  publicApp.post("/api/opt-out", (c) => c.json({ ok: true }));
+  publicApp.get("/api/opt-out/probe", (c) => c.json({ ok: true }));
 
-  const anon = await publicApp.request("/api/opt-out", { method: "POST" }, testEnv());
+  const anon = await publicApp.request("/api/opt-out/probe", {}, testEnv());
   assert.notEqual(anon.status, 401);
   assert.equal(anon.status, 200);
   assert.deepEqual(await anon.json(), { ok: true });

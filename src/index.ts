@@ -2,27 +2,22 @@ import { Hono } from "hono";
 import { bodyLimit } from "hono/body-limit";
 import { secureHeaders } from "hono/secure-headers";
 
-import { createRequireAuth, type AuthEnv, type AuthVariables } from "./lib/auth.js";
+import { createRequireAuth } from "./lib/auth.js";
+import type { Env, AppEnv } from "./env.js";
 import {
   MAX_BODY_BYTES,
   SECURITY_HEADERS,
   publicRouteLimiter,
   rateLimit,
 } from "./lib/hardening.js";
+import { registerBalanceRoutes } from "./routes/balance.js";
+import { registerCampaignRoutes } from "./routes/campaigns.js";
+import { registerTestSmsRoutes } from "./routes/test-sms.js";
+import { registerOptOutRoutes } from "./routes/opt-outs.js";
+import type { QueueMessage } from "./queue/messages.js";
 
-/** Cloudflare bindings available to the Worker. */
-export interface Env extends AuthEnv {
-  DB: D1Database;
-  ASSETS: Fetcher;
-  SMS_QUEUE: Queue;
-  SENDMODE_ACCESS_KEY: string;
-}
-
-/** Hono environment for the app: bindings plus the `identity` context variable. */
-export interface AppEnv {
-  Bindings: Env;
-  Variables: AuthVariables;
-}
+// Re-exported for back-compat: the Phase 5 tests import `type Env` from here.
+export type { Env, AppEnv } from "./env.js";
 
 /**
  * Paths under `/api/*` that are **public** (no auth). This is the *only* documented
@@ -70,10 +65,14 @@ export function createApp(): Hono<AppEnv> {
   });
 
   // --------------------------------------------------------------------------------------
-  // Routes registered in Phase 5. The opt-out route itself lands in Phase 6.7; the carve-out,
-  // rate limiter and guards are established here so the public exception is real and testable.
+  // Phase 6 routes — all behind the guard above except the public opt-out carve-out.
   // --------------------------------------------------------------------------------------
   app.get("/api/health", (c) => c.json({ status: "ok" }));
+
+  registerBalanceRoutes(app);
+  registerCampaignRoutes(app);
+  registerTestSmsRoutes(app);
+  registerOptOutRoutes(app);
 
   return app;
 }
@@ -82,7 +81,7 @@ const app = createApp();
 
 export default {
   fetch: app.fetch,
-  async queue(_batch: MessageBatch, _env: Env): Promise<void> {
+  async queue(_batch: MessageBatch<QueueMessage>, _env: Env): Promise<void> {
     // No-op consumer for now; routing by message `type` lands in Phase 7.
   },
 };

@@ -37,9 +37,9 @@ and drops the rest (see below).
 `docs/tech.md` > `docs/mission.md` > `docs/prototype.md` (UI reference only). If code and docs
 disagree, fix both in the same change.
 
-> Note: the repo may still be bootstrapping — paths like `src/`, `web/`, and
-> `scripts/seed-audience.ts` are **targets** until the relevant `roadmap.md` phase creates
-> them.
+> Note: the repo is no longer bootstrapping — `src/`, `src/routes/`, `src/services/`,
+> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–6 are
+> complete (see `docs/roadmap.md`); the next step is Phase 7 (queue consumer).
 
 ---
 

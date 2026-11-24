@@ -162,22 +162,65 @@
 
 ---
 
-## Phase 6 — Core API Endpoints
+## Phase 6 — Core API Endpoints ✅ DONE
 
-- **6.1** `GET /api/balance`: proxy `getBalance`, return `{ balance, audience_count }`
-  (`audience_count` from `sum(recipient_count)` minus opt-outs).
-- **6.2** `POST /api/campaigns`: validate → pre-flight balance check → single
-  `env.DB.batch([...])` insert of campaign + all batch rows (`QUEUED`/`PENDING`) → enqueue via
-  `sendBatch()` in slices of 100 → `202`.
-- **6.3** `GET /api/campaigns`: list with `?filter=upcoming|history`, ordered `created_at DESC`.
-- **6.4** `GET /api/campaigns/:id`: live progress + invalid count + per-batch errors.
-- **6.5** `POST /api/campaigns/:id/cancel`: per `tech.md` Flow B → `202`.
-- **6.6** `POST /api/test-sms`: single unscheduled test to one UK number; **record it in
-  History** (flagged as a test send).
-- **6.7** Opt-out endpoints (authenticated list/add/remove) + the **public opt-out page/route**
-  (the only unauthenticated route; validated + rate-limited).
-- **Verify:** exercise each endpoint with a dev identity against local D1 + a mocked
-  Sendmode; assert status codes, D1 rows created, and that enqueue counts are correct.
+> **Decisions made while building (recorded here, not guessed):**
+> - **Raw D1 + prepared statements, not a query builder in the hot path.** Schema still comes
+>   from Drizzle; runtime access goes through `src/db/client.ts` (`firstRow`/`allRows`/
+>   `runStatement`) so every query is explicit and stays inside D1's 50-queries/invocation and
+>   100-params limits. Multi-row writes use one `env.DB.batch([...])` (hard rule #4).
+> - **Route modules + services, thin handlers.** `src/routes/*` only parse/validate/shape HTTP;
+>   all persistence/orchestration lives in `src/services/*` (`audience`, `campaigns`,
+>   `opt-outs`, `test-sms`). The queue fan-out lives in the service, so no provider call is
+>   ever made in an HTTP request loop (hard rule #3).
+> - **Typed queue contract** in `src/queue/messages.ts` (`DISPATCH_BATCH` | `CANCEL_BATCH`),
+>   shared by the Phase 6 producer and the Phase 7 consumer so fields cannot drift. Slicing is
+>   `chunkArray(..., 100)` → the 81-chunk campaign is **one** `sendBatch()`, 101+ is split.
+> - **Test SMS = a flagged 1-recipient campaign.** `is_test = 1`, one batch, enqueued like any
+>   other send. It is **not** blocked by balance (1 credit) and needs no `audience_chunks` row,
+>   so `DispatchBatchMessage.recipients` carries the number inline; real batches still load
+>   their chunk by `chunkIndex`. `TEST_CHUNK_INDEX = -1` is the batch's sentinel.
+> - **Opt-out naming keeps the guard exact:** `/api/opt-outs` (plural) is authenticated
+>   management; `/api/opt-out` (singular) is the public page — preserving the Phase 5
+>   `PUBLIC_API_PATHS = ['/api/opt-out']` carve-out. The public handler accepts JSON (SPA) **and**
+>   urlencoded form posts (no-JS page), and returns a neutral message whether or not the number
+>   was already present.
+> - **Pre-flight safety:** a create/send is blocked (`400 insufficient_balance`) when the live
+>   balance cannot cover `segments × recipients`; a provider outage on `/api/balance` or the
+>   create pre-check is a `502` (we are the gateway) rather than a silent pass.
+> - **Cancel** marks `CANCELLING`, retires still-`PENDING` batches to `CANCELLED` in one batch
+>   write, and enqueues one `CANCEL_BATCH` per `SCHEDULED` batch that has a `request_id`; when
+>   there is nothing at the provider it settles straight to `CANCELLED`.
+
+- **6.1 ✅** `src/routes/balance.ts`: `GET /api/balance` → `{ balance, audience_count }`
+  (`audience_count` = `sum(recipient_count)` − opt-outs).
+- **6.2 ✅** `src/routes/campaigns.ts` + `src/services/campaigns.ts`: `POST /api/campaigns`
+  validates → strips opt-outs from the audience → pre-flight balance check → one
+  `env.DB.batch([...])` insert (`QUEUED` + `PENDING` rows) → `sendBatch()` in slices of ≤100 →
+  `202`.
+- **6.3 ✅** `GET /api/campaigns?filter=upcoming|history` (default `history`), `created_at DESC`;
+  unknown filter → `400`.
+- **6.4 ✅** `GET /api/campaigns/:id` → live progress + invalid count + per-batch errors; `404`
+  when unknown.
+- **6.5 ✅** `POST /api/campaigns/:id/cancel` per Flow B → `202`; `409` if already terminal,
+  `404` if unknown.
+- **6.6 ✅** `src/routes/test-sms.ts` + `src/services/test-sms.ts`: `POST /api/test-sms` sends one
+  unscheduled SMS to a single UK number and **records it in History** (`is_test = 1`).
+- **6.7 ✅** `src/routes/opt-outs.ts` + `src/services/opt-outs.ts`: authenticated
+  `GET`/`POST /api/opt-outs` + `DELETE /api/opt-outs/:number`, and the **public**
+  `POST /api/opt-out` page route (the only unauthenticated route; validated + rate-limited).
+- **Verify ✅** `npm test` → **78/78 pass** (59 from Phases 4–5 + **19 in `test/phase6.test.ts`**)
+  against a fake D1 + fake queue + stubbed Sendmode: `401` for anonymous `/api/*`; balance
+  proxied with opt-outs subtracted; create writes the campaign + one batch per chunk and
+  enqueues one `DISPATCH_BATCH` per batch (101 chunks → `[100, 1]`); opt-outs stripped before
+  sending; validation `400`; insufficient-balance `400` with nothing written/queued; scheduled
+  UK→UTC; list filter + ordering; detail errors; cancel (`CANCELLING`, `PENDING` retired,
+  `CANCEL_BATCH` per scheduled batch, `409`/`404`, immediate `CANCELLED`); test-SMS flagged in
+  History; opt-out add/list/remove + public add (JSON **and** form). `npx tsc --noEmit` (src)
+  and `-p test/tsconfig.json` clean; `wrangler deploy --dry-run` bundles. Also smoke-tested the
+  live Worker (`wrangler dev --local`, real seeded 8,060 audience): balance, opt-out add(list
+  count 1→valid 8059), public opt-out, test-SMS (History `isTest:true`), detail, cancel
+  (`CANCELLING`→`CANCELLED`), `404`s — all correct; local rows cleaned up after.
 
 ---
 
