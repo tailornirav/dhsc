@@ -70,7 +70,12 @@ dhsc/
   "compatibility_date": "2026-11-01",
   "assets": { "directory": "./web/dist", "binding": "ASSETS" },
   "d1_databases": [
-    { "binding": "DB", "database_name": "sms-campaigns-db", "database_id": "<YOUR_D1_ID>" }
+    {
+      "binding": "DB",
+      "database_name": "sms-campaigns-db",
+      "database_id": "<YOUR_D1_ID>",
+      "migrations_dir": "src/db/migrations"
+    }
   ],
   "queues": {
     "producers": [{ "binding": "SMS_QUEUE", "queue": "sms-campaign-jobs" }],
@@ -89,6 +94,9 @@ dhsc/
 `max_batch_size: 5` means each consumer invocation makes **at most 5 provider fetches** —
 comfortably under the 50-sub-request ceiling — while throttling gently against provider rate
 limits.
+
+`migrations_dir` points wrangler at the directory **drizzle-kit** emits into
+(`src/db/migrations`); without it wrangler looks in `./migrations` and finds nothing.
 
 Secrets (set with `wrangler secret put`, never committed):
 
@@ -129,6 +137,7 @@ CREATE TABLE campaigns (
   failed_batches     INTEGER NOT NULL DEFAULT 0,
   invalid_count      INTEGER NOT NULL DEFAULT 0,
   estimated_credits  INTEGER NOT NULL,
+  is_test            INTEGER NOT NULL DEFAULT 0,  -- 1 for a single test send (shown in History)
   created_at         TEXT NOT NULL,
   updated_at         TEXT NOT NULL
 );
@@ -152,6 +161,10 @@ CREATE INDEX idx_batches_campaign ON campaign_batches(campaign_id, status);
 Add an `opt_outs` table (at minimum: `mobile_number` unique + `created_at`) in the migration
 phase. Resolved: opt-out is a **public web page**, so the table is written by an
 unauthenticated route (validated + rate-limited) and read by audience computation.
+
+**Test-send flag:** `campaigns.is_test` (added in Phase 2) exists so a single test SMS can be
+**recorded in History and labelled as a test** (mission.md §8.6 / roadmap 6.6); the rest of a
+test row is shaped like any other 1-recipient campaign.
 
 ### Status machine (do not invent new values)
 
@@ -346,3 +359,11 @@ npx wrangler deploy
 ```
 
 Secrets in dev: put `SENDMODE_ACCESS_KEY=...` in `.dev.vars` (gitignored).
+
+**drizzle-kit credentials (optional).** Day-to-day schema work needs no credentials:
+`npx drizzle-kit generate` only reads `schema.ts`, and `wrangler d1 migrations apply` applies
+the emitted SQL. Only `drizzle-kit push` / `drizzle-kit migrate` (an alternative to the wrangler
+runner — not this project's source of truth) need d1-http credentials. To enable them, copy
+`.env.example` → `.env` (gitignored) and fill in `CLOUDFLARE_ACCOUNT_ID`
+(`npx wrangler whoami`), `CLOUDFLARE_DATABASE_ID` (`npx wrangler d1 list`), and
+`CLOUDFLARE_D1_TOKEN` (an API token with **D1 Edit**; secret — never commit).

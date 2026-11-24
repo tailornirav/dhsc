@@ -45,13 +45,16 @@
 
 ## Phase 2 — Database & Schema
 
-- **2.1** Author `src/db/schema.ts` (Drizzle `sqliteTable`): `audienceChunks`, `campaigns`,
-  `campaignBatches`, and `optOuts`. Mirror `tech.md` §4 exactly (types, defaults, index).
-- **2.2** Create `drizzle.config.ts` (dialect `sqlite`, driver `d1-http`, output
-  `src/db/migrations`).
-- **2.3** Run `drizzle-kit generate`; inspect the emitted SQL before applying it.
-- **2.4** Apply migrations locally: `wrangler d1 migrations apply … --local`.
-- **2.5** Apply migrations remotely (needs a real `database_id`).
+- **2.1 ✅** `src/db/schema.ts` (Drizzle `sqliteTable`): `audienceChunks`, `campaigns`,
+  `campaignBatches`, `optOuts`, mirroring `tech.md` §4 (+ `campaigns.is_test`).
+- **2.2 ✅** `drizzle.config.ts` (dialect `sqlite`, driver `d1-http`, output `src/db/migrations`).
+  Credentials are env-driven so no account id/token is committed.
+- **2.3 ✅** Ran `drizzle-kit generate`; SQL inspected before applying.
+- **2.4 ✅** Applied locally: `wrangler d1 migrations apply … --local`.
+- **2.5 ✅** Remote apply done. D1 database `sms-campaigns-db` created; real
+  `database_id` (`ae8b894d-e41d-4061-9678-e3ed4edef921`) wired into `wrangler.jsonc`; duplicate
+  auto-generated binding removed so only `DB` remains.
+- **Verify ✅** `wrangler d1 execute sms-campaigns-db --remote --command "select name from sqlite_master"` lists all four tables + index.
 - **Verify:** `wrangler d1 execute sms-campaigns-db --local --command "select name from sqlite_master"` lists all four tables + index.
 
 ---
