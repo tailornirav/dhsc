@@ -1,0 +1,43 @@
+@import "tailwindcss";
+
+/**
+ * Global styles for the DHSC dashboard.
+ *
+ * Tailwind v4 is wired through `@tailwindcss/vite` (see `vite.config.ts`), so this single
+ * import pulls in the utility engine used by every component. The prototype's visual system
+ * (prototype.md §2) is expressed directly with utility classes in the JSX; the only global
+ * rules here are the page canvas defaults and a couple of small affordances that are awkward
+ * to express per-element (focus ring consistency, reduced-motion courtesy).
+ */
+
+:root {
+  color-scheme: light;
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  -webkit-font-smoothing: antialiased;
+  text-rendering: optimizeLegibility;
+}
+
+/* Keep the native datetime picker's calendar icon visible on the light slate background. */
+input[type="datetime-local"]::-webkit-calendar-picker-indicator {
+  cursor: pointer;
+  opacity: 0.6;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.001ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.001ms !important;
+  }
+}

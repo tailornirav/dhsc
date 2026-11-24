@@ -276,23 +276,60 @@
 
 ---
 
-## Phase 8 — Frontend Shell (React + Vite + Tailwind)
+## Phase 8 — Frontend Shell (React + Vite + Tailwind) ✅ DONE
 
-- **8.1** Scaffold `web/` with Vite + React + Tailwind; configure dev proxy `/api` → Worker.
-- **8.2** Build the layout shell per `prototype.md` (§2–3): sticky header (brand, Opt-Outs
-  count, Sync Balance, environment pill, **Sign Out**), page canvas, container.
-- **8.3** Build the **Credit Health Monitor** (§4): deficit banner + 3 KPI cards wired to
-  `/api/balance` and campaign data.
-- **8.4** Build the **Create Campaign** panel (§5.1): name, read-only All-Contacts audience
-  with sanitization strip, message textarea with live estimator (encoding/char/segments/
-  recipients/cost), schedule radio + UK picker, Test/Send/Schedule buttons with guards.
-- **8.5** Build the **Queued & History** panel (§5.2): tabs with counts, campaign cards,
-  3-metric strip, countdowns, cancel button.
-- **8.6** Build modals (§6): Send Test SMS, Opt-Out Blacklist, Cancel Confirmation — with
-  Escape dismissal, focus trapping, `role="dialog"`, `aria-modal`.
-- **8.7** Add empty states, loading/disabled states, and toast/inline error+success feedback.
-- **Verify:** local dev shows all panels with live data; form guards disable Send/Schedule on
-  invalid input or insufficient balance; modals are accessible.
+> **Decisions made while building (recorded here, not guessed):**
+> - **`web/` is the Vite root; the build emits `web/dist`** — exactly what `wrangler.jsonc`
+>   serves through the `ASSETS` binding (`vite build web`), so no separate deploy step exists.
+>   Assets are hashed and same-origin, which keeps the Worker's strict CSP (`script-src 'self'`)
+>   intact (`src/lib/hardening.ts`). Vite proxies `/api/*` to `wrangler dev` in dev, so the browser
+>   stays on one origin and no CORS layer is ever needed.
+> - **The estimator is a client-side *mirror*, and the mirror is tested against the server.**
+>   `web/src/lib/sms.ts` duplicates `src/services/sms-segments.ts` + the budget rule in
+>   `src/lib/validate.ts`; `web/src/lib/time.ts` mirrors the UK↔UTC/DST logic. The prototype wants
+>   per-keystroke feedback (no server round-trip), so the only safe design is to prove the two
+>   agree: `test/phase8.test.ts` asserts the client and server produce **identical** results over a
+>   matrix of bodies, numbers, and schedule slots. Server validation stays authoritative.
+> - **The sender ID is provisioned, so it is build config — not an operator field.** `VITE_SENDER_ID`
+>   (default `DHSC`) is injected at build time and posted with every campaign/test send
+>   (mission.md §8.3). A subtle warning appears in the create panel when the default is in use.
+> - **Draft state lives in `App`.** One `CampaignDraft` is shared by the create form, the Test-SMS
+>   modal, and the submit handler so they can never disagree about the message being sent.
+> - **Polling only while something is in flight.** The Queued/History lists re-fetch every 5 s
+>   *only* when a campaign is `QUEUED`/`PROCESSING`/`SCHEDULED`/`CANCELLING`, so settled views make
+>   no idle traffic and a `CANCELLING`/`QUEUED` campaign self-heals without a manual refresh.
+> - **Sign Out is restored** (tech.md §10 overrides prototype.md §1): the header links to the
+>   Cloudflare Access logout path. The Worker never handles credentials.
+> - **No new dependencies.** Icons are inline SVG, feedback is a small toast context + viewport,
+>   modals are a hand-rolled accessible primitive — all built on the React/Tailwind already in
+>   `devDependencies` (hard rule #1: Cloudflare only, $0).
+
+- **8.1 ✅** `web/` scaffolded with Vite + React + Tailwind v4 (`@tailwindcss/vite`);
+  `web/vite.config.ts` proxies `/api` → `http://127.0.0.1:8787` (`WORKER_DEV_ORIGIN` overridable).
+  `npm run dev:web` runs the SPA; `npm run build` emits `web/dist`.
+- **8.2 ✅** `Header` (sticky): brand badge + title/subtitle, Opt-Outs (count), Sync Balance,
+  environment pill, Sign Out.
+- **8.3 ✅** `CreditHealthMonitor`: deficit banner (only when `reserved > balance`) + Live API
+  Balance / Reserved Credits / Effective Available KPI cards, fed by `/api/balance` + queued data.
+- **8.4 ✅** `CreateCampaignPanel`: name (≤80), read-only All-Contacts audience with the
+  `Raw − Opted-Out = Valid` strip, message + live estimator (encoding/char/segment/recipients/
+  cost, suffix counted first), immediate/scheduled radio with a UK (`Europe/London`) 15-min picker,
+  Test/Send/Schedule with guarded enablement.
+- **8.5 ✅** `QueuedHistoryPanel`: `role="tablist"` tabs with counts, Queued cards (coverage +
+  status pills, message preview, 3-metric strip, countdown, Cancel) and History cards (status pill,
+  test badge, final metrics).
+- **8.6 ✅** Modals: Send Test SMS, Opt-Out Blacklist, Cancel Confirmation — each a `role="dialog"`
+  + `aria-modal` primitive with Escape dismissal, backdrop dismissal, focus trapping, and focus
+  restore.
+- **8.7 ✅** Empty states, loading spinners, disabled/guarded buttons, and a toast viewport
+  (`role="status"`/`role="alert"`) plus inline field errors for validation failures.
+- **Verify ✅** `npm run typecheck` + `npm run typecheck:web` + `tsc -p test/tsconfig.json` clean;
+  `npm test` → **105/105 pass** (**8 in `test/phase8.test.ts`**, proving the client estimator /
+  UK-number / UK-schedule helpers match the server exactly). `npm run build` emits `web/dist`
+  (index.html + hashed JS/CSS). Local full-stack smoke: `wrangler dev` serves the built SPA at `/`
+  (`200`) while `/api/health` is `401` unauthenticated and `/api/opt-outs` returns live data
+  (`validRecipientCount: 8060`) when the Access identity header is present — anchoring the auth
+  guard from Phase 5 in the new UI.
 
 ---
 

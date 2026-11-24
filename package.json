@@ -5,13 +5,15 @@
   "type": "module",
   "scripts": {
     "dev": "wrangler dev",
+    "dev:web": "vite --config web/vite.config.ts",
     "build": "vite build web",
-    "deploy": "wrangler deploy",
+    		"deploy": "npm run build && wrangler deploy",
     "db:generate": "drizzle-kit generate",
     "db:migrate:local": "wrangler d1 migrations apply sms-campaigns-db --local",
     "db:migrate:remote": "wrangler d1 migrations apply sms-campaigns-db --remote",
     "seed": "tsx scripts/seed-audience.ts",
     "typecheck": "tsc --noEmit",
+    "typecheck:web": "tsc --noEmit -p web/tsconfig.json",
     "test": "node --import tsx --test test/**/*.test.ts"
   },
   "dependencies": {

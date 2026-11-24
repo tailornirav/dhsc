@@ -54,9 +54,19 @@ dhsc/
 │   ├── services/           # sendmode.ts, campaigns.ts, balance.ts, sms-segments.ts
 │   ├── queue/              # consumer dispatch + per-job handlers
 │   └── lib/                # auth middleware, validation, errors, time (UK<->UTC)
-└── web/                    # React + Vite frontend
-    ├── src/ …
-    └── dist/               # build output served as static assets
+└── web/                    # React + Vite frontend (Vite root)
+    ├── vite.config.ts      # React + Tailwind plugins, /api dev proxy
+    ├── index.html          # SPA entry (loads /src/main.tsx)
+    ├── src/
+    │   ├── main.tsx        # React root
+    │   ├── App.tsx         # shell + cross-cutting state orchestration
+    │   ├── api.ts          # typed fetch client (same-origin /api/*)
+    │   ├── hooks.ts        # balance/campaigns/opt-outs data hooks
+    │   ├── config.ts       # build-time VITE_SENDER_ID / VITE_ENVIRONMENT
+    │   ├── types.ts        # response-shape mirrors
+    │   ├── lib/            # sms.ts / time.ts (server-mirrored), format.ts, issues.ts
+    │   └── components/     # header, monitor, panels, modals, primitives, icons
+    └── dist/               # build output served through the ASSETS binding
 ```
 
 ---
@@ -360,13 +370,24 @@ The prototype is **directional**. Key deltas already decided by the mission:
 - Accessibility: `role="dialog"`/`aria-modal` on modals, tab roles on Queued/History, labelled
   inputs.
 
+**Client mirror contract (Phase 8).** The SPA computes its estimator locally for per-keystroke
+feedback, so `web/src/lib/sms.ts` and `web/src/lib/time.ts` **mirror** the authoritative server
+logic (`src/services/sms-segments.ts`, the budget rule in `src/lib/validate.ts`, and
+`src/lib/uk-time.ts`). They must stay byte-for-byte equivalent in behaviour; `test/phase8.test.ts`
+enforces that the two sides return identical results over a matrix of bodies/numbers/slots. If you
+change the server rules, change the mirror and re-run `npm test`.
+
+**Runtime config.** The provisioned sender ID is injected at build time as `VITE_SENDER_ID`
+(default `DHSC`); `VITE_ENVIRONMENT` labels the header pill. Neither is a secret (mission.md §8.3).
+Put dev values in a gitignored `web/.env.local`.
+
 ---
 
 ## 11. Local Development & Commands (expected)
 
 ```bash
 npm install
-npm run dev            # vite dev server for web/ (proxying /api to wrangler dev)
+npm run dev:web        # Vite dev server for web/ (proxying /api to wrangler dev)
 npx wrangler dev       # Worker (API + queue) locally
 npx drizzle-kit generate           # emit migration SQL from schema.ts
 npx wrangler d1 migrations apply sms-campaigns-db --local

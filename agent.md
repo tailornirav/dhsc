@@ -31,15 +31,15 @@ and drops the rest (see below).
 | Drizzle schema + migrations. | `src/db/schema.ts`, `src/db/migrations/` |
 | One-time CSV → `audience_chunks` seeder (keeps only clean `+447…` rows). | `scripts/seed-audience.ts` |
 | Worker app + queue consumer. | `src/index.ts`, `src/routes/`, `src/services/`, `src/queue/`, `src/lib/` |
-| React + Vite frontend. | `web/` (builds to `web/dist`, served via the `ASSETS` binding) |
+| React + Vite frontend. | `web/` (Vite root; builds to `web/dist`, served via the `ASSETS` binding) |
 
 **Authority order when docs conflict:** `docs/sms-api.md` (external contract) >
 `docs/tech.md` > `docs/mission.md` > `docs/prototype.md` (UI reference only). If code and docs
 disagree, fix both in the same change.
 
 > Note: the repo is no longer bootstrapping — `src/`, `src/routes/`, `src/services/`,
-> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–7 are
-> complete (see `docs/roadmap.md`); the next step is Phase 8 (frontend shell).
+> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–8 are
+> complete (see `docs/roadmap.md`); the next step is Phase 9 (end-to-end wiring).
 
 ---
 
@@ -109,12 +109,14 @@ irreversible spend. Breaking one silently breaks the product.
 
 ```bash
 npm install
-npx wrangler dev                        # Worker (API + queue) locally
-npm run dev                             # Vite dev server for web/ (proxy /api)
+npm run dev                             # Worker (API + queue) locally (wrangler dev)
+npm run dev:web                         # Vite dev server for web/ (proxy /api -> wrangler dev)
 npx drizzle-kit generate                # emit migration SQL
 npx wrangler d1 migrations apply sms-campaigns-db --local
 npx wrangler d1 migrations apply sms-campaigns-db --remote
 npx tsx scripts/seed-audience.ts        # chunk CSV -> audience_chunks
+npm run typecheck && npm run typecheck:web   # src + web type checks
+npm test                                # unit tests (incl. client/server mirror)
 npm run build                           # build web/ -> web/dist
 npx wrangler deploy
 ```
