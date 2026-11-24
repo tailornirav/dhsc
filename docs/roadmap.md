@@ -10,10 +10,10 @@
 
 ---
 
-## Phase 0 — Decisions & Groundwork (no product code yet)
+## Phase 0 — Decisions & Groundwork ✅ DONE (no product code yet)
 
-> Most decisions are **resolved** (see `mission.md` §8). Only 0.6 and the two footnotes in
-> §8 remain soft — do not block on them.
+> Phase complete: all decisions resolved and Phase 0 verified. 0.7 is now a **closed**
+> decision (webhooks not needed).
 
 - **0.1 ✅** Hosted at **`dhsc.uk`**, auth via simple password **Cloudflare Access (Zero Trust)**.
 - **0.2 ✅** Opt-out is a **public web page** (phone-number form) — the only unauthenticated route.
@@ -23,14 +23,15 @@
 - **0.5 ✅** CSV has **~8,000–8,500 records** → **~80–85 chunks** at 100/chunk.
   *(Resolved in Phase 3: 8,093 data rows → 8,060 clean → 81 chunks.)*
 - **0.6 ✅** **Test SMS appears in History** (marked as a test send).
-- **0.7 ⏸ Webhooks deferred:** terminal state is provider acceptance (`request_id`). Do not
-  build webhook consumption now.
+- **0.7 ✅ Webhooks not needed:** terminal state is provider acceptance (`request_id`). No
+  webhook endpoint/consumption will be built — there is no per-message delivery status to
+  update.
 - **0.8 ✅ Defaults:** `max_batch_size: 5`, `max_concurrency: 2`, `max_retries: 5`.
-- **Verify:** decisions §8 in `mission.md` read as facts; no remaining hard blockers.
+- **Verify ✅** decisions §8 in `mission.md` read as facts; no remaining hard blockers.
 
 ---
 
-## Phase 1 — Project Skeleton
+## Phase 1 — Project Skeleton ✅ DONE
 
 - **1.1** Create `package.json` with scripts: `dev`, `build`, `deploy`, `db:generate`,
   `db:migrate:local`, `db:migrate:remote`, `seed`.
@@ -40,11 +41,11 @@
 - **1.4** Author `wrangler.jsonc` exactly per `tech.md` §3 (placeholder `database_id`).
 - **1.5** Create `src/index.ts` exporting a minimal Hono app with a `GET /api/health` route
   and a no-op `queue()` export.
-- **Verify:** `npx wrangler dev` starts; `GET /api/health` returns `200`.
+- **Verify ✅** `npx wrangler dev` starts; `GET /api/health` returns `200`.
 
 ---
 
-## Phase 2 — Database & Schema
+## Phase 2 — Database & Schema ✅ DONE
 
 - **2.1 ✅** `src/db/schema.ts` (Drizzle `sqliteTable`): `audienceChunks`, `campaigns`,
   `campaignBatches`, `optOuts`, mirroring `tech.md` §4 (+ `campaigns.is_test`).
@@ -56,11 +57,10 @@
   `database_id` (`ae8b894d-e41d-4061-9678-e3ed4edef921`) wired into `wrangler.jsonc`; duplicate
   auto-generated binding removed so only `DB` remains.
 - **Verify ✅** `wrangler d1 execute sms-campaigns-db --remote --command "select name from sqlite_master"` lists all four tables + index.
-- **Verify:** `wrangler d1 execute sms-campaigns-db --local --command "select name from sqlite_master"` lists all four tables + index.
 
 ---
 
-## Phase 3 — Audience Seeding
+## Phase 3 — Audience Seeding ✅ DONE
 
 > **Reality vs docs (resolved):** the file is `docs/data.csv` with header
 > `customer_name,phone_e164,visit_count` (not the roadmap's `name,phone`). It was described as
