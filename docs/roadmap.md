@@ -82,21 +82,43 @@
 
 ---
 
-## Phase 4 — Sendmode Service Layer (no HTTP yet)
+## Phase 4 — Sendmode Service Layer (no HTTP yet) ✅ DONE
 
-- **4.1** `src/services/sendmode.ts`: typed wrappers for `getBalance`, `sendBulk`,
-  `scheduleBulk`, `cancelSchedule`. Base URL `https://sms-rest.sendmode.dev`; bare
-  `Authorization`; `Content-Type: application/json` on every body incl. DELETE.
-- **4.2** `src/services/sms-segments.ts`: pure functions — detect GSM-7 vs UCS-2, count
-  characters, compute segments (160/70 rule for single-segment; multi-segment 153/67), and
-  `estimatedCredits(segments, recipients)`.
-- **4.3** `src/lib/uk-time.ts`: parse a `Europe/London` local datetime → validate 15-min
-  alignment, `:00` seconds, ≥20 min lead → produce ISO 8601 UTC `Z` string. Handle GMT/BST.
-- **4.4** `src/lib/validate.ts`: campaign input validation (`name`, `sender_id` ≤11 no `<>`,
-  `message` 1–1224 no `<>`, schedule rules) + E.164 UK phone validation/normalization.
-- **Verify:** unit-level checks (a small `node --test`/`vitest` file) for segment math
-  (incl. emoji → UCS-2), UK→UTC conversion across a BST and a GMT date, and validation edge
-  cases.
+> **Decisions made while building (recorded here, not guessed):**
+> - **Testing:** Node's built-in test runner (`node --test`) via `tsx` — **no new dependency**
+>   (matches the $0 / minimal-toolchain rule; roadmap allowed `node --test`/`vitest`). Run with
+>   `npm test`; `npm run typecheck` checks `src/`, and `test/tsconfig.json` type-checks the
+>   tests (Node + Workers types kept separate so `fetch`/`Response` don't clash).
+> - **Opt-out suffix constant:** `Stop: dhsc.uk/x` (15 septets), appended after **one separator
+>   space**; the operator's GSM-7 single-segment budget is therefore **160 − 15 − 1 = 144**
+>   characters. Defined once as `OPT_OUT_SUFFIX` in `src/lib/validate.ts`.
+> - **Hard cap = single segment:** the outbound body (text + suffix) must fit **one** segment
+>   (160 GSM-7 / 70 UCS-2); anything longer is rejected so cost can never silently double.
+> - **`sendmode.ts` returns a discriminated result** (`{ok:true,...}` / `{ok:false,reason,...}`)
+>   instead of throwing — retry/terminal policy stays in Phase 7 (the queue), not in the
+>   service. `accessKey`/`fetch`/`baseUrl` are injectable so calls are unit-testable without
+>   the network.
+> - **`uk-time.ts` DST** is derived from `Intl.DateTimeFormat({timeZone:'Europe/London'})`
+>   via a guess-and-correct step (no hardcoded offset, no `moment`/`luxon`).
+
+- **4.1 ✅** `src/services/sendmode.ts`: typed `getBalance`, `sendBulk`, `scheduleBulk`,
+  `cancelSchedule`. Base URL `https://sms-rest.sendmode.dev`; **bare** `Authorization` (never
+  `Bearer`); `Content-Type: application/json` on every body incl. `DELETE /3.0/schedule`.
+- **4.2 ✅** `src/services/sms-segments.ts`: `detectEncoding` (GSM-7 vs UCS-2 using the full
+  3GPP TS 23.038 basic + extension tables), `analyzeSegments` (extension chars = 2 septets;
+  single 160/70, multipart 153/67), and `estimatedCredits(segments, recipients)`.
+- **4.3 ✅** `src/lib/uk-time.ts`: `parseUkLocal` → `validateUkSchedule` (real calendar date,
+  minutes ∈ {00,15,30,45}, seconds `:00`, ≥20 min lead, ≤2-year sanity guard) → ISO 8601 UTC
+  `Z`. Handles GMT/BST and deterministic DST-transition resolution.
+- **4.4 ✅** `src/lib/validate.ts`: `validateCampaign` (`name` ≤80, `sender_id` ≤11 alphanumeric
+  no `<>`, `message` no `<>` + single-segment budget, schedule rules) and UK E.164
+  validation/normalization (`normalizeUkMobile`/`isValidUkMobile`).
+- **Verify ✅** `npm test` → **37/37 pass** (`test/phase4.test.ts`): GSM-7/UCS-2 boundaries &
+  emoji flip, extension-char cost, credit math; UK→UTC across a **BST** and a **GMT** date
+  plus the 20-min boundary; validation edge cases; and mocked-fetch checks of every provider
+  request's URL, method, **bare** auth header, JSON body (incl. the DELETE quirk), and the
+  `400/401/429/5xx/network/invalid-shape` → reason mapping. `npx tsc --noEmit` (src) and
+  `npx tsc --noEmit -p test/tsconfig.json` are clean; `wrangler deploy --dry-run` bundles.
 
 ---
 
