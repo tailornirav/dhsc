@@ -1,0 +1,34 @@
+{
+  "name": "dhsc",
+  "version": "0.0.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "wrangler dev",
+    "build": "vite build web",
+    "deploy": "wrangler deploy",
+    "db:generate": "drizzle-kit generate",
+    "db:migrate:local": "wrangler d1 migrations apply sms-campaigns-db --local",
+    "db:migrate:remote": "wrangler d1 migrations apply sms-campaigns-db --remote",
+    "seed": "tsx scripts/seed-audience.ts"
+  },
+  "dependencies": {
+    "drizzle-orm": "^0.45.4",
+    "hono": "^4.13.21"
+  },
+  "devDependencies": {
+    "@cloudflare/workers-types": "^5.20261124.2",
+    "@tailwindcss/vite": "^4.3.5",
+    "@types/react": "^19.3.1",
+    "@types/react-dom": "^19.3.0",
+    "@vitejs/plugin-react": "^6.3.0",
+    "drizzle-kit": "^0.31.11",
+    "react": "^19.3.1",
+    "react-dom": "^19.3.1",
+    "tailwindcss": "^4.3.5",
+    "tsx": "^4.23.15",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.8",
+    "wrangler": "^4.168.0"
+  }
+}
