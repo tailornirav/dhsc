@@ -241,7 +241,9 @@ delay (~200 ms) between provider calls. Every message is `{ type: 'DISPATCH_BATC
    rows (`PENDING`) via `env.DB.batch([...])` — counts as **1 query**.
 4. **Enqueue in 2 calls:** `SMS_QUEUE.sendBatch()` accepts ≤ 100 messages/call; slice the
    batch jobs into chunks of 100 → two calls. Payload:
-   `{ type: 'DISPATCH_BATCH', campaignId, batchId, chunkIndex }`.
+   `{ type: 'DISPATCH_BATCH', campaignId, batchId, chunkIndex, recipients }` — where `recipients`
+   is the batch's **opt-out-stripped** number list (already computed for the estimate). The
+   consumer sends exactly these, so a blacklisted number can never reach the provider.
 5. Return **`202 Accepted`** (target: < 1 s).
 
 ### Flow B — Cancel campaign (`POST /api/campaigns/:id/cancel`)
@@ -259,7 +261,9 @@ per `request_id`.
 ### Flow C — Queue consumer
 
 **`DISPATCH_BATCH`:**
-1. Load campaign, batch, and `audience_chunk` from D1.
+1. Load the campaign and the batch. The recipients come from the message's `recipients` field
+   (opt-out-stripped by the producer); the consumer does **not** re-read the raw `audience_chunks`
+   row, because that row still contains opted-out numbers (tech.md §4 "Opt-outs").
 2. **Idempotency/race guard:** if `batch.status !== 'PENDING'` → `ack`, skip. If
    `campaign.status ∈ {'CANCELLING','CANCELLED'}` → mark batch `CANCELLED`, `ack`, skip
    (stops sending if the operator cancelled mid-queue).

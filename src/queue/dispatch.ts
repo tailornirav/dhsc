@@ -8,8 +8,9 @@
  * has already left `PENDING`.
  *
  * Flow (tech.md Flow C, `DISPATCH_BATCH`):
- *   1. Load the campaign, the batch, and its recipients (from `audience_chunks` unless the
- *      message carries them inline — a test send has no chunk row).
+ *   1. Load the campaign and the batch. The recipients come from the message (`recipients`,
+ *      already opt-out-stripped by the producer) — the consumer never re-reads the raw
+ *      `audience_chunks` row, because that row still contains opted-out numbers.
  *   2. Idempotency/race guard: a non-`PENDING` batch is acked and skipped. A campaign being
  *      cancelled (`CANCELLING`/`CANCELLED`) retires the batch as `CANCELLED` and skips the send.
  *   3. Call the provider once (`POST /3.0/send/bulk` or `/3.0/schedule/bulk`).
@@ -185,9 +186,10 @@ export function isTransient(reason: SendmodeFailureReason): boolean {
 }
 
 /**
- * Resolve the recipient list for a dispatch message: inline `recipients` (a test send, which
- * has no audience row) take precedence; otherwise read the `audience_chunks` row named by
- * `chunkIndex`.
+ * Resolve the recipient list for a dispatch message. The message always carries `recipients`
+ * (the producer strips opt-outs before enqueuing; a test send supplies its single number). The
+ * `audience_chunks` fallback exists only for a legacy/abbreviated message that omitted them, so
+ * the batch can still send rather than strand — but the primary path is the inline list.
  */
 async function resolveRecipients(db: D1Database, message: DispatchBatchMessage): Promise<string[]> {
   if (message.recipients && message.recipients.length > 0) {

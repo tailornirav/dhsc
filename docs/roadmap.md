@@ -333,14 +333,55 @@
 
 ---
 
-## Phase 9 — End-to-End Wiring
+## Phase 9 — End-to-End Wiring ✅ DONE
 
-- **9.1** Immediate campaign end-to-end: create → queue → batches `SENT` → History shows it.
-- **9.2** Scheduled campaign end-to-end: create → batches `SCHEDULED` → Queued view + countdown.
-- **9.3** Cancellation end-to-end: cancel → `CANCELLING` → provider DELETEs → `CANCELLED`.
-- **9.4** Test SMS end-to-end.
-- **9.5** Opt-out add/remove updates the valid recipient count everywhere.
-- **Verify:** walk all five flows in a local full-stack run; capture request/response evidence.
+> **Decisions made while building (recorded here, not guessed):**
+> - **The consumer sends the producer's opt-out-stripped recipient list, not a fresh chunk
+>   read.** Phase 8 proved the layers in isolation, and walking the flows end-to-end surfaced a
+>   real wiring bug: campaign creation stripped opt-outs to compute the count/cost, but the
+>   `DISPATCH_BATCH` message only carried `chunkIndex`, and the consumer re-read the **raw**
+>   `audience_chunks` row — so an opted-out number was still sent (cost shown ≠ numbers sent, and
+>   the blacklist was violated). The fix: `enqueueDispatch()` now puts the already-stripped
+>   `recipients` on every message (the field the test-send path already used), and the consumer
+>   prefers it. The raw-chunk read remains only as a legacy fallback. (~100 E.164 numbers is
+>   ~1.5 KB, far inside the queue message limit; nothing is re-queried per batch.)
+> - **Verification is a bound, reproducible full-stack walk, not a paid one.** Sending is
+>   irreversible and costs real money (mission.md §6.1), so the five flows are walked in
+>   `test/phase9.test.ts`, which drives the **real** HTTP app (`createApp()` request→response) and
+>   the **real** queue consumer (`worker.queue()`) together against the D1/queue fakes and a
+>   stubbed provider. A separate bounded `wrangler dev` smoke (`scripts/phase9-smoke.sh`) confirms
+>   the built Worker boots, serves the SPA, guards `/api/*`, and reads live data — without touching
+>   the live provider.
+> - **Each flow asserts the observable evidence at every hop:** HTTP status/body, D1 row state,
+>   the exact provider calls (send vs. schedule vs. delete, and the request body), and the
+>   consumer's ack/retry decision — the same request/response evidence a manual walk produces.
+> - **The cancel race is a first-class case.** Cancelling while `DISPATCH_BATCH` jobs are still
+>   queued must retire them as `CANCELLED` and send nothing (hard rule #11); both the mid-flight
+>   drain and the pre-dispatch race are asserted.
+
+- **9.1 ✅** Immediate campaign: `POST /api/campaigns` → `202` `QUEUED` → two `DISPATCH_BATCH`
+  jobs → `POST /3.0/send/bulk` per chunk → batches `SENT` → History shows it `SENT`.
+- **9.2 ✅** Scheduled campaign: create → `POST /3.0/schedule/bulk` per chunk → batches
+  `SCHEDULED` + `request_id` → campaign `SCHEDULED` → appears in the Queued view with a future
+  `scheduleDate` (the card's countdown source).
+- **9.3 ✅** Cancellation: `POST /api/campaigns/:id/cancel` → `202` `CANCELLING` → one
+  `CANCEL_BATCH` per scheduled batch → `DELETE /3.0/schedule` per `request_id` → batches
+  `CANCELLED` → campaign `CANCELLED`. Cancelling **before** dispatch enqueues 0 cancels, sends
+  nothing, and settles `CANCELLED`.
+- **9.4 ✅** Test SMS: `POST /api/test-sms` → normalised recipient + inline dispatch → `SENT`,
+  recorded in History with `isTest: true`, one credit.
+- **9.5 ✅** Opt-outs: add/remove (authenticated) and the **public** `/api/opt-out` route both move
+  the valid recipient count everywhere (`/api/balance`, `/api/opt-outs`, and campaign creation),
+  and a stripped number never appears in an enqueued or sent payload.
+- **Verify ✅** `npm test` → **113/113 pass** (**8 in `test/phase9.test.ts`** driving the real
+  HTTP app + real queue consumer through all five flows; `test/phase6.test.ts` now also asserts the
+  enqueued `recipients` are opt-out-stripped). `npm run typecheck` + `npm run typecheck:web` +
+  `tsc -p test/tsconfig.json` clean; `npm run build` emits `web/dist`. Local **bounded** full-stack
+  run (`bash scripts/phase9-smoke.sh`, real `wrangler dev` + the seeded local D1 — 81 chunks /
+  **8,060** recipients): SPA at `/` → `200`; anonymous `/api/health` → `401`; `WHERE` an Access
+  identity header (or the dev bypass) → `200` with live D1 data; public `POST /api/opt-out` → `200`
+  and the count moves `8059 → 8060` across add/remove. **No live provider call is ever made** by
+  the suite or the smoke.
 
 ---
 

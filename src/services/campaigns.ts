@@ -145,6 +145,14 @@ export function chunkArray<T>(items: T[], size: number = QUEUE_BATCH_LIMIT): T[]
  * Enqueue one `DISPATCH_BATCH` message per batch, in slices of ≤100 per `sendBatch()` call
  * (Flow A step 4, hard rule #3 — never loop provider calls in a request; the queue fans out).
  * Returns the number of messages handed to the queue.
+ *
+ * Each message carries the batch's **stripped** `recipients` (opt-outs already removed by
+ * `loadAudienceChunks`). This is essential: the consumer must send exactly the numbers the
+ * operator's cost estimate covered, and it must **never** re-read the raw `audience_chunks` row —
+ * that row still contains opted-out numbers, and the blacklist is only applied at audience
+ * computation (tech.md §4 "Opt-outs", mission.md §4.8). Passing the recipients inline keeps the
+ * send faithful to the displayed audience without a second, racy blacklist lookup per batch.
+ * (~100 E.164 numbers is ~1.5 KB, far inside the queue message limit.)
  */
 export async function enqueueDispatch(
   queue: Queue<DispatchBatchMessage>,
@@ -160,6 +168,7 @@ export async function enqueueDispatch(
           campaignId,
           batchId: batch.id,
           chunkIndex: batch.chunkIndex,
+          recipients: batch.recipients,
         } satisfies DispatchBatchMessage,
       })),
     );

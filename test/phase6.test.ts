@@ -127,6 +127,15 @@ test("6.2 POST /api/campaigns validates, writes campaign + batches, and enqueues
       ["DISPATCH_BATCH", "DISPATCH_BATCH"],
     );
     assert.deepEqual(queue.batches, [2]);
+    // Each message carries its stripped chunk recipients so the consumer never re-reads the raw
+    // `audience_chunks` row (the Phase 9 fix): batch 0 → chunk 0's 3 numbers, batch 1 → chunk 1's 2.
+    assert.deepEqual(
+      queue.messages.map((m) => (m.type === "DISPATCH_BATCH" ? m.recipients : null)),
+      [
+        ["+447700900001", "+447700900002", "+447700900003"],
+        ["+447700900004", "+447700900005"],
+      ],
+    );
   } finally {
     provider.restore();
   }
@@ -148,6 +157,12 @@ test("6.2 POST /api/campaigns strips opt-outs from the audience before sending",
     assert.equal(res.status, 202);
     const body = (await res.json()) as { totalRecipients: number };
     assert.equal(body.totalRecipients, 4); // 5 − 1 opt-out
+    // The opted-out number must be gone from **every** queued payload (not just the count).
+    const queuedNumbers = queue.messages.flatMap((m) =>
+      m.type === "DISPATCH_BATCH" ? (m.recipients ?? []) : [],
+    );
+    assert.equal(queuedNumbers.length, 4);
+    assert.ok(!queuedNumbers.includes("+447700900001"), "opted-out number is stripped from the enqueued recipients");
   } finally {
     provider.restore();
   }

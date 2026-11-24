@@ -14,13 +14,17 @@ export interface DispatchBatchMessage {
   type: "DISPATCH_BATCH";
   campaignId: string;
   batchId: string;
-  /** Chunk row to send (its `mobile_numbers_json` is the recipient list). */
+  /**
+   * Chunk row this batch was planned from. Present so the batch is traceable back to its
+   * `audience_chunks` row, but it is **not** the send list: the consumer sends `recipients`
+   * (below).
+   */
   chunkIndex: number;
   /**
-   * Inline recipient list. Real campaigns leave this undefined and let the consumer read the
-   * `audience_chunks` row named by `chunkIndex`. A **test send** has no chunk row (the number
-   * is arbitrary and must never enter the static audience), so it supplies the single number
-   * here instead.
+   * The exact numbers to send, with opt-outs already stripped by `loadAudienceChunks`. A real
+   * campaign supplies its stripped chunk here; a **test send** (which has no chunk row) supplies
+   * its single number. The consumer prefers this over reading `audience_chunks` by `chunkIndex`,
+   * so an opted-out number can never reach the provider (tech.md §4 "Opt-outs").
    */
   recipients?: string[];
 }

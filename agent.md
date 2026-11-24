@@ -30,6 +30,7 @@ and drops the rest (see below).
 | Worker config (Worker, assets, D1, Queues bindings). | `wrangler.jsonc` |
 | Drizzle schema + migrations. | `src/db/schema.ts`, `src/db/migrations/` |
 | One-time CSV → `audience_chunks` seeder (keeps only clean `+447…` rows). | `scripts/seed-audience.ts` |
+| Bounded local full-stack smoke (real `wrangler dev` + local D1, no live provider). | `scripts/phase9-smoke.sh` |
 | Worker app + queue consumer. | `src/index.ts`, `src/routes/`, `src/services/`, `src/queue/`, `src/lib/` |
 | React + Vite frontend. | `web/` (Vite root; builds to `web/dist`, served via the `ASSETS` binding) |
 
@@ -38,8 +39,8 @@ and drops the rest (see below).
 disagree, fix both in the same change.
 
 > Note: the repo is no longer bootstrapping — `src/`, `src/routes/`, `src/services/`,
-> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–8 are
-> complete (see `docs/roadmap.md`); the next step is Phase 9 (end-to-end wiring).
+> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–9 are
+> complete (see `docs/roadmap.md`); the next step is Phase 10 (polish, security, deploy).
 
 ---
 
