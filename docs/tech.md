@@ -208,7 +208,10 @@ test row is shaped like any other 1-recipient campaign.
 
 Plus:
 - `POST /api/test-sms` — single, unscheduled test SMS to one UK number (used by the Test SMS
-  modal). **Test sends are recorded in History** (flagged as a test send).
+  modal). **Test sends are recorded in History** (flagged as a test send). A test send costs
+  **1 credit**, so it runs the **same pre-flight balance check as a campaign** (hard rule #9):
+  refused with `400 insufficient_balance` when the balance cannot cover the credit, and
+  `502 provider_error` if `GET /3.0/balance` fails.
 - `GET /api/opt-outs` / `POST /api/opt-outs` / `DELETE /api/opt-outs/:number` — authenticated
   opt-out management (count shown in the header).
 - **Public opt-out route** (no auth) — the page a customer visits at **`dhsc.uk/x`** (the SMS
@@ -382,7 +385,8 @@ per `request_id`.
 > blacklist is now applied at **both** create and dispatch time — the consumer re-checks
 > `opt_outs` before each provider call, so a recipient who opts out during a scheduled window is
 > dropped at send time (11.3, fixed). (11.1, the public opt-out form now returning an HTML
-> confirmation, and 11.2, the same-origin backstop above, are also fixed.) 11.4–11.8 remain
+> confirmation, and 11.2, the same-origin backstop above, are also fixed — 11.4 likewise now
+> applies the balance pre-flight to test sends.) 11.5–11.8 remain
 > correctness/polish items — see `roadmap.md`.
 
 ---

@@ -45,9 +45,10 @@ disagree, fix both in the same change.
 > (`wrangler secret put`, `wrangler deploy`, a real test SMS) are ops actions. See `README.md` for
 > the runbook. **A full code review (Phases 0–10) produced `roadmap.md` Phase 11** — a set of
 > real defects. **11.1** (public opt-out form now returns an HTML confirmation), **11.2**
-> (same-origin/CSRF backstop on mutating `/api/*` routes), and **11.3** (opt-outs are now
-> re-checked at dispatch time for scheduled sends) are **fixed**; the must-fix set is complete,
-> with 11.4–11.8 as correctness/polish. Phase 11 is the current work; do not report the remaining
+> (same-origin/CSRF backstop on mutating `/api/*` routes), **11.3** (opt-outs are now
+> re-checked at dispatch time for scheduled sends), and **11.4** (test sends now run the same
+> balance pre-flight as a campaign) are **fixed**; with 11.5–11.8 as remaining
+> correctness/polish. Phase 11 is the current work; do not report the remaining
 > areas as "done" until they land.
 
 ---

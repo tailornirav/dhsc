@@ -7,8 +7,9 @@
  * (`is_test = 1`) — see `src/services/test-sms.ts`.
  *
  * Runs through the queue like everything else (hard rule #3), so the same retry/idempotency
- * path applies; it is *not* blocked by balance (a single credit) but we still surface the
- * provider's decision.
+ * path applies. A test send costs 1 credit, so it gets the **same pre-flight balance check as
+ * a campaign** (hard rule #9): at zero balance it is refused rather than allowed to spend a
+ * credit that is not there.
  */
 
 import type { Hono } from "hono";
@@ -17,6 +18,7 @@ import type { AppEnv } from "../env.js";
 import { readJsonBody, requiredString } from "../lib/http.js";
 import { normalizeUkMobile, validateCampaign } from "../lib/validate.js";
 import { nowUtcIso } from "../lib/uk-time.js";
+import { getBalance } from "../services/sendmode.js";
 import { createTestSend } from "../services/test-sms.js";
 import type { DispatchBatchMessage } from "../queue/messages.js";
 
@@ -43,6 +45,28 @@ export function registerTestSmsRoutes(app: Hono<AppEnv>): void {
       mode: "IMMEDIATE",
     });
     if (!validated.ok) return c.json({ error: "validation_failed", issues: validated.issues }, 400);
+
+    // Pre-flight balance (hard rule #9): a test send costs 1 credit, so refuse it when the
+    // live balance cannot cover that credit — the same rule a campaign gets.
+    const credits = 1;
+    const balanceResult = await getBalance({ accessKey: c.env.SENDMODE_ACCESS_KEY });
+    if (!balanceResult.ok) {
+      return c.json(
+        { error: "provider_error", reason: balanceResult.reason, message: balanceResult.message },
+        502,
+      );
+    }
+    if (balanceResult.data.balance < credits) {
+      return c.json(
+        {
+          error: "insufficient_balance",
+          message: `A test send needs ${credits} credit but only ${balanceResult.data.balance} are available.`,
+          required: credits,
+          available: balanceResult.data.balance,
+        },
+        400,
+      );
+    }
 
     const { campaignId, batchId, fullMessage } = await createTestSend(
       c.env.DB,

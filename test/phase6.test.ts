@@ -523,6 +523,51 @@ test("6.6 POST /api/test-sms normalises the number and rejects a non-UK-mobile (
   }
 });
 
+test("6.6 POST /api/test-sms blocks when the balance cannot cover the single credit (400, nothing written)", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(0); // zero credit available
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/test-sms",
+      json({ body: { to: "+447700900123", senderId: "DHSC", message: "Test copy" } }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string; required: number; available: number };
+    assert.equal(body.error, "insufficient_balance");
+    assert.equal(body.required, 1);
+    assert.equal(body.available, 0);
+    // Nothing is written or enqueued on refusal.
+    assert.equal(db.campaigns.length, 0);
+    assert.equal(queue.messages.length, 0);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("6.6 POST /api/test-sms surfaces a balance-provider failure as 502", async () => {
+  const provider = stubProvider();
+  provider.failStatus = 503;
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/test-sms",
+      json({ body: { to: "+447700900123", senderId: "DHSC", message: "Test copy" } }),
+      makeEnv(seededDb(), new FakeQueue()),
+    );
+    assert.equal(res.status, 502);
+    const body = (await res.json()) as { error: string; reason: string };
+    assert.equal(body.error, "provider_error");
+    assert.equal(body.reason, "server_error");
+  } finally {
+    provider.restore();
+  }
+});
+
 // =======================================================================================
 // 6.7 — Opt-outs (authenticated) + public opt-out
 // =======================================================================================

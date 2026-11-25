@@ -510,7 +510,7 @@
 >   `always stripped from every audience` (tech.md §4). 11.3 makes that true at *send* time, not
 >   only at *create* time; record it as resolved.
 > - **Test-send balance rule** — 11.4 decides whether `POST /api/test-sms` is exempt from the
->   balance pre-flight (hard rule #9) or not.
+>   balance pre-flight (hard rule #9) or not. **Resolved:** enforced, same as a campaign.
 
 ### 11.1 ✅ Public opt-out form must return an HTML confirmation, not raw JSON
 
@@ -598,19 +598,29 @@
   `npm run typecheck` clean; the provider stub shows the filtered recipient list.
 - **Decision recorded:** `mission.md` §8 now marks the scheduled-send opt-out re-check **resolved**.
 
-### 11.4 ☐ Test-send balance handling (decide, then align code + docs)
+### 11.4 ✅ Test-send balance handling (decide, then align code + docs)
 
 > **Defect.** `POST /api/campaigns` blocks when `balance < credits` (hard rule #9), but
-> `POST /api/test-sms` does **not** check balance at all — a zero-balance operator can still
-> fire test sends (each costs a credit). The doc says "not blocked by balance"; the hard rule
-> says block. Pick one.
+> `POST /api/test-sms` did **not** check balance at all — a zero-balance operator could still
+> fire test sends (each costs a credit). The doc said "not blocked by balance"; the hard rule
+> said block.
 
-- **11.4.1 ☐** Decide (record in `mission.md` §8): **exempt** test sends (document the reason:
-  a single credit, needed to verify copy) **or** apply the same pre-flight as campaigns.
-- **11.4.2 ☐** Implement the chosen rule in `src/routes/test-sms.ts`. If exempt, add a short
-  comment + a doc line in `tech.md` §5; if enforced, reuse the `getBalance` check and return the
-  same `insufficient_balance` shape.
-- **11.4.3 ☐** Test the chosen behavior. **Verify:** `npm test` green; `npm run typecheck` clean.
+> **Landed.** The **enforce** option was chosen: a test send is 1 credit, so it now runs the
+> **same pre-flight as a campaign**. `src/routes/test-sms.ts` calls `getBalance` after
+> validation and before `createTestSend`, returning `400 insufficient_balance` when the balance
+> cannot cover the credit and `502 provider_error` on a provider outage — the identical shape
+> `POST /api/campaigns` uses. Two new tests in `test/phase6.test.ts` cover the refusal (nothing
+> written or enqueued) and the outage.
+
+- **11.4.1 ✅** Decided and recorded in `mission.md` §8: the send is **enforced**, not exempt — a
+  single credit is still a credit, and hard rule #9 (block a send the balance cannot cover)
+  applies to it exactly as it does to a campaign.
+- **11.4.2 ✅** Implemented in `src/routes/test-sms.ts`: the same `getBalance` pre-flight and the
+  same `insufficient_balance` / `provider_error` shapes as `POST /api/campaigns`; the stale "not
+  blocked by balance" comment is removed and the rule is documented in `tech.md` §5.
+- **11.4.3 ✅** Tested in `test/phase6.test.ts` (zero balance → `400 insufficient_balance`, nothing
+  written; provider `503` → `502 provider_error`). **Verified:** `npm test` green;
+  `npm run typecheck` clean.
 
 ### 11.5 ☐ `messageBudget` must report the UCS-2 limit when the body flips encoding
 

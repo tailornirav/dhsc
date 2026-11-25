@@ -169,6 +169,8 @@ These are now **settled facts**. Treat them as requirements, not preferences.
   stripped before batches are enqueued) and **dispatch** time — `handleDispatch` loads a fresh
   `loadOptOutSet` and drops any recipient who opted out during the scheduled window before calling
   the provider, so the guarantee holds at send time too.
-- **Test-send balance rule (11.4):** hard rule #9 says block a send when the estimate exceeds
-  credit, but `POST /api/test-sms` is currently exempt. Decide whether a test send (1 credit)
-  stays exempt or gets the same pre-flight as a campaign.
+- **Test-send balance rule (11.4): RESOLVED.** A test send is **not** exempt: it costs 1 credit,
+  so `POST /api/test-sms` runs the **same pre-flight as a campaign** (hard rule #9) — a
+  `GET /3.0/balance` check that refuses the send with the same `insufficient_balance` shape
+  (and the same `502 provider_error` on an outage) when the balance cannot cover the credit.
+  The old "not blocked by balance" behaviour and the code comment that stated it are gone.
