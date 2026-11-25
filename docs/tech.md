@@ -188,6 +188,17 @@ who opts out during a scheduled window is dropped — roadmap 11.3).
 **recorded in History and labelled as a test** (mission.md §8.6 / roadmap 6.6); the rest of a
 test row is shaped like any other 1-recipient campaign.
 
+**Audience source (default vs. manual).** A campaign's recipient list has **two possible
+sources**, chosen at create time, and **no new column** distinguishes them — the campaign row is
+identical either way:
+
+- **Default (all contacts):** every `audience_chunks` row minus opt-outs (mission.md §8.5).
+- **Manual list (roadmap Phase 12):** a list of UK mobile numbers pasted by the operator,
+  validated/normalised, de-duplicated, and opt-out-stripped (mission.md §8.10). No
+  `audience_chunks` row is read or written; the stripped numbers travel on the queue message's
+  `recipients` field exactly as a test send does. A manual campaign simply has
+  `total_recipients`/`total_batches` derived from the pasted list.
+
 ### Status machine (do not invent new values)
 
 - `campaigns.status`: `QUEUED` → `PROCESSING` → (`SENT` | `SCHEDULED` | `PARTIAL_FAILURE`);
@@ -201,7 +212,7 @@ test row is shaped like any other 1-recipient campaign.
 | Method | Endpoint | Behavior |
 | :--- | :--- | :--- |
 | `GET` | `/api/balance` | Proxy `GET /3.0/balance`; return `{ balance, audience_count }`. |
-| `POST` | `/api/campaigns` | Validate, check balance, create campaign + batch rows, enqueue, `202 Accepted`. |
+| `POST` | `/api/campaigns` | Validate, resolve the audience (all contacts, **or** a pasted `recipients` list — Phase 12), check balance, create campaign + batch rows, enqueue, `202 Accepted`. |
 | `GET` | `/api/campaigns` | List campaigns by `created_at DESC`; support `?filter=upcoming` \| `history`. |
 | `GET` | `/api/campaigns/:id` | Live progress: `completed_batches/total_batches`, invalid count, batch errors. |
 | `POST` | `/api/campaigns/:id/cancel` | Mark `CANCELLING`, enqueue cancel jobs for scheduled batches. |
@@ -242,6 +253,12 @@ delay (~200 ms) between provider calls. Every message is `{ type: 'DISPATCH_BATC
    `<`/`>`; if scheduled — valid ISO 8601 UTC ending `Z`, minutes ∈ {00,15,30,45},
    seconds `:00`, and **≥ 20 min in the future** (5-minute buffer over the provider's 15-min
    minimum so the last batch never arrives late).
+1a. **Resolve the audience (Phase 12):** if the request carries a non-empty `recipients`
+   string, it is a **manual list** — split on line/`,`/`;` whitespace, `normalizeUkMobile` each
+   entry, reject the whole request `400 validation_failed` if **any** line is invalid (with the
+   offending lines), then de-duplicate and opt-out-strip. Otherwise it is the **default** —
+   `loadAudienceChunks` (all contacts minus opt-outs). Both paths end with the same shape: a
+   list of recipient groups of ≤100. An empty result is `400 empty_audience`.
 2. **Pre-flight balance:** compute segments (160 GSM-7 / 70 UCS-2 if emojis or non-GSM chars)
    × `total_recipients`; `GET /3.0/balance`; reject `400` if balance < estimate.
 3. **Single D1 batch write:** insert the `campaigns` row (`QUEUED`) and all `campaign_batches`
@@ -403,8 +420,11 @@ The prototype is **directional**. Key deltas already decided by the mission:
 
 - **Auth is back** (the prototype removed it): the dashboard is visible only to a logged-in
   user; add a Sign Out affordance.
-- **Default all contacts** (no audience dropdown), with a sanitization strip
-  (`Raw → −Opted-Out → = Valid`).
+- **Default all contacts** (no audience dropdown *by default*), with a sanitization strip
+  (`Raw → −Opted-Out → = Valid`). A second audience option — **“Send to specific numbers”** with
+  a paste box (roadmap Phase 12) — is a **source toggle** on the same form, not a return of the
+  prototype's subset dropdown; when active, the strip reflects the pasted list's own count
+  (`Entered → −Duplicate → −Opted-Out → = Valid`).
 - **Live estimator** bound to real state: encoding (GSM-7/UCS-2), characters, segments,
   recipients, total cost — and account for the opt-out suffix length if it is appended.
 - **UK date/time picker** labelled `Europe/London`, 15-min slots, ≥20 min lead, sent as UTC.

@@ -693,6 +693,122 @@
 
 ---
 
+## Phase 12 — Manual recipient list ("send to specific numbers") ☐ TODO
+
+> **Why this phase exists:** today a campaign can only target **all contacts** (`audience_chunks`
+> minus opt-outs). Operators sometimes need to send a one-off blast to a **few numbers they paste
+> in** (e.g. a handful of regulars, a test group, a small event list). The mission was updated for
+> this (mission.md §8.10, success criterion §4.2).
+>
+> **Design mandate — minimal disruption. This is an *audience source*, not a new pipeline.**
+> Reuse the existing create → queue → dispatch path **unchanged**: the pasted numbers become the
+> batch `recipients[]` we already send on the queue message (the test-send path already enqueues
+> an inline number this way). Therefore: **no new endpoint, no new table, no migration, no new
+> status, no new queue message type, no new provider call shape.** The entire surface change is
+> one optional `recipients` string on `POST /api/campaigns` plus a UI toggle — anything larger is
+> out of scope for this phase.
+>
+> **Safety is the point.** Operators cannot be trusted to paste clean data, so the list gets the
+> **same tight checks as every other audience**: `normalizeUkMobile` per entry (the authoritative
+> UK-mobile rule — accepts `+447…`, `447…`, `07…`, and spaced/dashed forms), reject the whole
+> request on any invalid line (never silently drop), de-duplicate, and opt-out-strip. The existing
+> `empty_audience`, `insufficient_balance`, and single-segment message rules apply unchanged.
+>
+> **Records to add to `mission.md` §8 in the same change (do not guess):** the manual recipient
+> decision (§8.10) and the §5 non-goal clarification (pasting a one-off list is in scope;
+> persisting/editing a contact list is not).
+
+### 12.1 ☐ Server: accept an optional manual `recipients` list on create
+
+> **Nano-step, no schema change.** Add the audience *source* branch only; every downstream step
+> of Flow A stays byte-identical.
+
+- **12.1.1 ☐** In `src/lib/validate.ts`, add a pure parser — e.g.
+  `parseManualRecipients(raw: string): { numbers: string[]; invalid: string[] }` — that splits
+  input on newlines, commas, and semicolons (plus surrounding whitespace), runs each entry
+  through `normalizeUkMobile`, de-duplicates the valid set (order-preserving), and returns the
+  invalid raw entries **as-given** so the API can name them in the error. Keep it pure so both
+  the route and the web mirror can share the rule. **Do not** invent a second number regex —
+  `normalizeUkMobile` is the one source of truth (mission.md §6.5, tech.md §9.4).
+- **12.1.2 ☐** In `src/routes/campaigns.ts` (`toCampaignInput` + the `POST /api/campaigns`
+  handler), read `recipients` as an optional string. When present and non-blank:
+    1. parse it with `parseManualRecipients`; if `invalid.length > 0` return
+       `400 validation_failed` with one issue per bad entry
+       (`{ field: 'recipients', code: 'invalid_number', message: '…is not a valid UK mobile.' }`)
+       — **refuse, never silently drop** (mirrors the campaign invalid-input rule).
+    2. strip opt-outs via the already-loaded `loadOptOutSet`, then chunk the survivors into
+       ≤100 groups (`chunkArray`, the existing helper) to build the same `PlannedBatch[]` the
+       default path builds (`chunkIndex` = 0,1,2… in order; no `audience_chunks` row is read).
+    3. if the stripped list is empty → `400 empty_audience` (same shape as today).
+  When `recipients` is absent/blank, keep the **current** default path exactly.
+- **12.1.3 ☐** Leave `insertCampaign`, `enqueueDispatch`, the queue consumer, and
+  `src/services/campaigns.ts` **untouched** — they already take `PlannedBatch[]` with explicit
+  `recipients`. Confirm by reading them; this step should add **zero** code there.
+- **Verify:** `npm test` green (existing 132 all pass unchanged) + `npm run typecheck` clean.
+
+### 12.2 ☐ Server tests: the manual list is validated, deduped, and opt-out-stripped
+
+- **12.2.1 ☐** In `test/phase6.test.ts` (Flow A family), add cases driving the **real HTTP app**:
+    - a valid multi-line list (mix of `+447…`, `447…`, `07… 700 900 077` spellings) → `202`,
+      and the enqueued `DISPATCH_BATCH` messages carry exactly the **normalised** numbers and
+      the chunks are ≤100 per message;
+    - a list with a duplicate → the duplicate is sent **once**;
+    - a list containing an opt-out number → that number is **absent** from the queue payload;
+    - a list with **one bad entry** (e.g. `+441234`, a landline, `hello`) → `400
+      validation_failed`, **no** `campaigns`/`campaign_batches` rows written, **nothing**
+      enqueued (assert the stub provider queue saw no `DISPATCH_BATCH`);
+    - a list where **every** number is opted out → `400 empty_audience`;
+    - `insufficient_balance` still refuses a manual send just like a default one.
+- **12.2.2 ☐** Add a pure unit test for `parseManualRecipients` in `test/phase4.test.ts`
+  (separators, whitespace, dedupe, invalid capture).
+- **Verify:** `npm test` green (new count > 132); `npm run typecheck` + `npx tsc --noEmit -p
+  test/tsconfig.json` clean. **No live provider call.**
+
+### 12.3 ☐ Client: mirror the parser + extend the API call
+
+- **12.3.1 ☐** Add `parseManualRecipients` to `web/src/lib/sms.ts` (or a small new
+  `web/src/lib/recipients.ts`) as a **byte-for-byte behavioural mirror** of the server function,
+  exactly like the existing `sms.ts`/`time.ts` mirrors (tech.md §10). Reuse the client's
+  `normalizeUkMobile` equivalent if one exists; if the client has none, mirror it too.
+- **12.3.2 ☐** Add `recipients?: string` to the `createCampaign` input in `web/src/api.ts`
+  (pass-through only; omit the key entirely when the mode is "all contacts").
+- **12.3.3 ☐** Extend `test/phase8.test.ts` with the mirror-parity matrix for the new parser
+  (same inputs → identical `{ numbers, invalid }` on both sides).
+- **Verify:** `npm test` green; `npm run typecheck:web` clean.
+
+### 12.4 ☐ UI: audience-source toggle + paste box in `CreateCampaignPanel`
+
+- **12.4.1 ☐** Add an audience-source control to the **Target Audience** block (prototype.md
+  §5.1): two options — `All Contacts` (default, today's read-only strip) and `Specific Numbers`
+  (a `role="radiogroup"`/radio pair, matching the existing Delivery-Schedule radios for style).
+  When `Specific Numbers` is selected, reveal a `<textarea>` (labelled, `font-mono`, placeholder
+  like `+447700900077, 07700900078` — one per line or comma-separated) and swap the sanitization
+  strip for the pasted-list counts: `Entered → −Duplicate → −Opted-Out → = Valid`.
+- **12.4.2 ☐** Extend `CampaignDraft` with the new field (e.g. `recipients: string` and an
+  `audienceSource: 'all' | 'manual'`); thread it through `App.tsx`'s `EMPTY_DRAFT` and
+  `submitCampaign` (send `recipients` only when `audienceSource === 'manual'`). The live estimator
+  and the cost/affordability guard must use the **manual** valid count when that source is active
+  (it drives `Recipients` and `Total Est. Cost`).
+- **12.4.3 ☐** Extend the guards so `Send`/`Schedule` are disabled when `Specific Numbers` is
+  selected and the parsed list has **zero valid** entries or any invalid entry — surface the
+  invalid lines inline via the existing `FieldIssues`/`FieldError` path (add `recipients` to
+  `FieldIssues`). Client validation stays **convenience only**; the server remains authoritative.
+- **12.4.4 ☐** Update `prototype.md` §5.1 and §1 (item 2) to describe the toggle so the UI
+  reference is not stale. **Verify:** `npm run typecheck:web` clean; `npm run build` succeeds;
+  manual dev-backend walk (`npm run dev` + `npm run dev:web`) shows the toggle, the strip, the
+  disabled-guard behaviour, and a `202` on a small valid list. **No live provider call on
+  submit** — use the local seeded D1 / dev values.
+
+### Phase 12 — Verify (automatable)
+
+- `npm test` → existing 132 **plus** the Phase 12 tests, all green.
+- `npm run typecheck` + `npm run typecheck:web` + `npx tsc --noEmit -p test/tsconfig.json` clean.
+- `npm run build` → `web/dist` still builds and includes `x.html`.
+- **No migration, no schema drift** (`npx drizzle-kit generate` emits **no** new migration).
+- **No live provider call and no spend at any point.**
+
+---
+
 ## Backlog / Later (only if the mission expands)
 
 - Consume Sendmode **webhooks** for real delivery status (deferred decision, `mission.md` §8.7).

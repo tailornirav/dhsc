@@ -14,7 +14,9 @@ the **Sendmode API**, running entirely on **Cloudflare Workers + D1 + Queues at 
 
 The customer list is a **static CSV** (seeded once into a pre-chunked table); it is **not**
 edited in the app. The file is **not** perfectly clean — the seeder keeps only valid UK mobiles
-and drops the rest (see below).
+and drops the rest (see below). A campaign targets either **all contacts** (the default) or a
+**manually pasted list of numbers** for a one-off send (roadmap Phase 12) — the manual list is
+validated, deduped, and opt-out-stripped, and is **not** stored anywhere.
 
 ---
 
@@ -52,6 +54,11 @@ disagree, fix both in the same change.
 > persisted); with 11.5–11.7 as remaining
 > correctness/polish. Phase 11 is the current work; do not report the remaining
 > areas as "done" until they land.
+>
+> **Phase 12 (manual recipient list — "send to specific numbers") is planned and NOT started.**
+> It adds an **audience source** (all contacts *or* a pasted list) to the *existing* create form
+> and `POST /api/campaigns`; it is deliberately **the smallest possible change** — no migration,
+> no new table, no new endpoint, no new status (mission.md §8.10, `docs/roadmap.md` Phase 12).
 
 ---
 

@@ -53,7 +53,8 @@ Sendmode dashboard or any terminal:
 1. **See credit health** — live provider balance, credits reserved by queued campaigns, and
    net available credits, with a clear warning if a queued campaign is under-funded.
 2. **Create a campaign** — name it, write a message, see a *live* character/segment/cost
-   estimate, and target **all contacts** (opt-outs already stripped).
+   estimate, and choose the audience: **all contacts** (opt-outs already stripped) **or** a
+   **manually pasted list of UK mobile numbers** (also opt-out-stripped and validated).
 3. **Send immediately** — dispatched in chunks through a background queue, with per-batch
    status visible.
 4. **Schedule a campaign** — pick a UK `Europe/London` date/time on 15-minute slots, at
@@ -76,7 +77,9 @@ These are deliberately **out of scope**; do not build them unless the mission ch
 
 - Multi-tenant support (one restaurant, one account).
 - A CRM / contact editor / import pipeline. The CSV is static; it is seeded once (only valid
-  UK mobiles are kept, dirty rows are dropped), not managed in-app.
+  UK mobiles are kept, dirty rows are dropped), not managed in-app. (Pasting a one-off list of
+  numbers into a single campaign is **in scope** — see §8.10 — but *persisting/editing* a
+  contact list is still out of scope.)
 - Rich delivery analytics, per-recipient delivery receipts, or provider webhooks. (The API
   supports webhooks, but consuming them is **deferred** — terminal state is provider
   acceptance. See `mission.md` §8.)
@@ -136,7 +139,8 @@ These are now **settled facts**. Treat them as requirements, not preferences.
    changes the budget and doubles cost — the estimator must show this live.
 5. **Audience:** the CSV has **8,093 data rows**; after dropping the 33 dirty rows the
    **8,060 clean** UK mobiles seed **81 `audience_chunks` rows** (80×100 + 1×60). Chunk size
-   stays 100 (matches the provider's 100-cap).
+   stays 100 (matches the provider's 100-cap). This is the **default** audience; a campaign may
+   instead target a **manually supplied list** (see §8.10).
 6. **Test SMS:** **recorded in History** like any other campaign (marked as a test send), so
    the operator can see what was tested.
 7. **Webhooks:** *deferred / undecided.* For now the terminal state is **"accepted by the
@@ -153,6 +157,15 @@ These are now **settled facts**. Treat them as requirements, not preferences.
    `src/lib/hardening.ts`, wired into the `/api/*` guard in `src/index.ts`). Chosen as a cheap,
    stateless backstop that **complements** Cloudflare Access and the Access cookie's `SameSite`
    attribute — it does not replace them, and it is not a per-request CSRF token.
+10. **Manual recipient list (roadmap Phase 12):** a campaign may target a **manually pasted**
+    list of UK mobile numbers instead of the full CSV audience. This is an **audience source**
+    choice on the same create form (immediate or scheduled), **not** a new contact store. It
+    reuses the existing create → queue → dispatch pipeline unchanged: the pasted numbers are
+    validated/normalised (`normalizeUkMobile`), de-duplicated, opt-out-stripped, chunked into
+    ≤100-recipient batches, and enqueued with explicit `recipients` (exactly as the test-Send
+    path already does). No new table, no migration, no new status, no new endpoint — the
+    optional `recipients` field on `POST /api/campaigns` is the whole contract. Input that
+    fails validation is **refused** (`400 validation_failed`, no rows written, nothing enqueued).
 
 ### Still genuinely open
 

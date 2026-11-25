@@ -7,6 +7,8 @@ A login-protected web dashboard that lets a UK restaurant send **bulk SMS campai
 - **Host:** `dhsc.uk` — password-based **Cloudflare Access** in front of the dashboard and all
   `/api/*`. The **only** public route is the opt-out page at `/x`.
 - **Audience:** a static, pre-chunked CSV seeded into D1 (`audience_chunks`); not edited in-app.
+  A campaign targets either **all contacts** (default) or a **manually pasted list of UK numbers**
+  for a one-off send (validated, deduped, opt-out-stripped, never stored).
 
 Start with **[`agent.md`](agent.md)** for the project map and the hard rules, then
 **[`docs/tech.md`](docs/tech.md)** (stack, schema, API, security) and

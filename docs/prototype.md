@@ -10,7 +10,7 @@
 Before building, apply these explicit scope changes over the reference prototype:
 
 1. **No Login Gate:** Remove the unauthenticated Login Gate view completely. The application opens directly into the Main Dashboard workspace. Also omit the **Sign Out** button from the top navigation header (only re-introduce authentication UI if an auth layer is explicitly added later).
-2. **Default All Contacts (No Audience Dropdown):** Remove the Target Audience `<select>` dropdown (`All Contacts`, `Random Contacts Subset`, `Top Frequent Visitors`) and the conditional `Number of Contacts` input. Every campaign automatically targets **All Contacts** (after stripping opt-outs), displayed via a read-only audience summary and sanitization strip.
+2. **Default All Contacts (No Subset Dropdown):** Remove the Target Audience `<select>` dropdown (`All Contacts`, `Random Contacts Subset`, `Top Frequent Visitors`) and the conditional `Number of Contacts` input. By default every campaign targets **All Contacts** (after stripping opt-outs), displayed via a read-only audience summary and sanitization strip. The **only** added audience choice is a simple **`Specific Numbers`** toggle that reveals a paste box (roadmap Phase 12) — the random/percentage subset selector stays removed.
 
 ---
 
@@ -77,13 +77,14 @@ White card with a subtle header (`Create Campaign` / `Draft and schedule your SM
 1. **Campaign Name**
    * `<input type="text" maxlength="80">`
    * Placeholder: `e.g. Weekend Tasting Menu Promo`
-2. **Target Audience (Read-Only Default: All Contacts)**
+2. **Target Audience (All Contacts by default; "Specific Numbers" as an option)**
    * Header row with label `Target Audience` and right-aligned pill badge showing live billable count (e.g., `1,238 Valid Billable`).
-   * Static/read-only badge or container indicating `All Contacts (Default)` — **no dropdown selector and no contact count subset field**.
+   * Audience-source control (radio pair, same style as the Delivery-Schedule radios): **`All Contacts`** (default) and **`Specific Numbers`**. There is still **no subset dropdown and no "Number of Contacts" field**.
+   * When `All Contacts` is selected: a static/read-only container indicating `All Contacts (Default)` plus the sanitization strip below.
+   * When `Specific Numbers` is selected: reveal a labelled `<textarea>` (`font-mono`, one number per line or comma-separated, placeholder e.g. `+447700900077, 07700900078`) and replace the strip with the pasted-list counts.
    * **Sanitization Summary Strip** (`bg-slate-50 border border-slate-200 rounded-lg text-xs`):
-     * `Raw: 1,250`
-     * `-12 Opted-Out` (`text-orange-600`)
-     * `= 1,238 Valid` (`text-emerald-700 font-semibold`)
+     * All Contacts: `Raw: 1,250` → `-12 Opted-Out` (`text-orange-600`) → `= 1,238 Valid` (`text-emerald-700 font-semibold`)
+     * Specific Numbers: `Entered: 5` → `-1 Duplicate` → `-1 Opted-Out` (`text-orange-600`) → `= 3 Valid` (`text-emerald-700 font-semibold`); invalid lines are flagged inline.
 3. **Message Body & Real-Time Estimator**
    * Header row with label `Message Body` and helper text noting segment budget (e.g., `Max 160 chars (1 segment, -16 for "Stop: dhsc.uk/x")`, dynamically adjusted if UCS-2/multi-segment is supported).
    * `<textarea>` for SMS copy.
@@ -91,7 +92,7 @@ White card with a subtle header (`Create Campaign` / `Draft and schedule your SM
      * `Encoding`: `GSM-7` (or `UCS-2` when non-GSM characters/emojis are detected)
      * `Characters`: `used / max (remaining left)`
      * `Segments/Msg`: `current / maxAllowed`
-     * `Recipients`: Valid billable contact count
+     * `Recipients`: Valid billable contact count (the manual count when `Specific Numbers` is active)
      * `Total Est. Cost` (full-width bottom row): `recipients * segments` in bold `text-blue-600` (e.g., `1,238 credits`)
 4. **Delivery Schedule**
    * Radio group (`name="schedule"`):
