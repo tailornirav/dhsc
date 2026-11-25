@@ -25,6 +25,7 @@ import {
   buildFullMessage,
   estimatedCredits,
   messageBudget,
+  summarizeManualRecipients,
 } from "../lib/sms";
 import { MIN_LEAD_MINUTES, describeScheduleProblem, nextSlotLocalValue } from "../lib/time";
 import { SENDER_ID_CONFIGURED } from "../config";
@@ -37,6 +38,10 @@ export interface CampaignDraft {
   mode: "IMMEDIATE" | "SCHEDULED";
   /** `datetime-local` value in UK local time; only meaningful when `mode === "SCHEDULED"`. */
   scheduleLocal: string;
+  /** Audience source: every contact (default) or a pasted list of specific numbers. */
+  audienceSource: "all" | "manual";
+  /** Pasted recipient list; only meaningful when `audienceSource === "manual"`. */
+  recipients: string;
 }
 
 /** Fields a validation response can point at (mirrors the server's `ValidationIssue.field`). */
@@ -44,6 +49,7 @@ export interface FieldIssues {
   name?: string;
   message?: string;
   scheduleLocal?: string;
+  recipients?: string;
 }
 
 export interface CreateCampaignPanelProps {
@@ -57,6 +63,8 @@ export interface CreateCampaignPanelProps {
   validRecipients: number | null;
   /** Live balance for the affordability guard; null while unknown. */
   balance: number | null;
+  /** Normalised (`+447…`) opt-out numbers, for the pasted-list strip counts. */
+  optOutSet: ReadonlySet<string>;
   /** Per-field server errors to show inline. */
   fieldIssues: FieldIssues;
   submitting: boolean;
@@ -120,6 +128,7 @@ export function CreateCampaignPanel({
   optOutCount,
   validRecipients,
   balance,
+  optOutSet,
   fieldIssues,
   submitting,
   onOpenTest,
@@ -129,8 +138,19 @@ export function CreateCampaignPanel({
   const messageId = useId();
   const scheduleId = useId();
   const radioName = useId();
+  const audienceRadioName = useId();
+  const recipientsId = useId();
 
-  const recipients = validRecipients ?? 0;
+  const audienceIsManual = draft.audienceSource === "manual";
+
+  // Manual list: parse once, then let the strip + estimator + guards share the result.
+  const manual = useMemo(
+    () => summarizeManualRecipients(draft.recipients, optOutSet),
+    [draft.recipients, optOutSet],
+  );
+
+  // The active recipient count drives the estimator, the cost, and the affordability guard.
+  const recipients = audienceIsManual ? manual.numbers.length : validRecipients ?? 0;
   const estimator = useEstimator(draft.message, recipients);
 
   const scheduleProblem =
@@ -144,10 +164,21 @@ export function CreateCampaignPanel({
   const nameOk = draft.name.trim().length > 0 && draft.name.trim().length <= MAX_NAME_LENGTH;
   const messageOk = draft.message.trim().length > 0 && !estimator.overBudget;
   const scheduleOk = draft.mode === "IMMEDIATE" || scheduleProblem === null;
-  const recipientsOk = recipients > 0;
+  // Manual source needs at least one valid number and no bad lines; the server re-checks anyway.
+  const recipientsOk = audienceIsManual
+    ? manual.numbers.length > 0 && manual.invalid.length === 0
+    : recipients > 0;
   const affordable = balance === null ? true : estimator.totalCost <= balance;
   const canSubmit =
     nameOk && messageOk && scheduleOk && recipientsOk && affordable && !submitting;
+
+  const manualError =
+    fieldIssues.recipients ??
+    (audienceIsManual && manual.invalid.length > 0
+      ? `${manual.invalid.length} entr${manual.invalid.length === 1 ? "y is" : "ies are"} not a valid UK mobile: ${manual.invalid.join(", ")}.`
+      : audienceIsManual && manual.numbers.length === 0
+        ? "Enter at least one valid UK mobile number."
+        : undefined);
 
   const update = (patch: Partial<CampaignDraft>) => onDraftChange({ ...draft, ...patch });
 
@@ -184,28 +215,85 @@ export function CreateCampaignPanel({
           <FieldError message={fieldIssues.name} />
         </div>
 
-        {/* 2. Read-only audience with sanitization strip */}
-        <div>
-          <div className="flex items-center justify-between">
+        {/* 2. Audience source (all contacts, or a pasted list) with sanitization strip */}
+        <fieldset>
+          <legend className="flex w-full items-center justify-between">
             <span className="text-sm font-medium text-slate-700">Target Audience</span>
             <span className="inline-flex items-center rounded-full border border-emerald-200 bg-emerald-50 px-2.5 py-0.5 text-xs font-medium text-emerald-700">
               {formatCount(recipients)} Valid Billable
             </span>
+          </legend>
+
+          <div className="mt-2 space-y-2">
+            <Radio
+              name={audienceRadioName}
+              checked={!audienceIsManual}
+              onChange={() => update({ audienceSource: "all" })}
+              label="All Contacts"
+            />
+            <Radio
+              name={audienceRadioName}
+              checked={audienceIsManual}
+              onChange={() => update({ audienceSource: "manual" })}
+              label="Specific Numbers"
+            />
           </div>
 
-          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
-            <p className="font-medium text-slate-600">All Contacts (Default)</p>
-            <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
-              <span className="text-slate-500">Raw: {rawAudience === null ? "—" : formatCount(rawAudience)}</span>
-              <span className="text-orange-600">
-                −{optOutCount === null ? "—" : formatCount(optOutCount)} Opted-Out
-              </span>
-              <span className="font-semibold text-emerald-700">
-                = {formatCount(recipients)} Valid
-              </span>
+          {audienceIsManual ? (
+            <div className="mt-2">
+              <label htmlFor={recipientsId} className="block text-sm font-medium text-slate-700">
+                Recipient numbers
+              </label>
+              <textarea
+                id={recipientsId}
+                rows={4}
+                value={draft.recipients}
+                onChange={(event) => update({ recipients: event.target.value })}
+                placeholder="+447700900077, 07700900078"
+                aria-invalid={Boolean(manualError)}
+                className={cx(
+                  "mt-1 w-full resize-y rounded-lg border px-3 py-2 font-mono text-sm text-slate-900 placeholder:text-slate-400",
+                  "focus:outline-none focus:ring-2 focus:ring-blue-500",
+                  manualError ? "border-red-300" : "border-slate-300",
+                )}
+              />
+              <p className="mt-1 text-xs text-slate-500">
+                One number per line or comma-separated. Pasted numbers are not saved.
+              </p>
             </div>
+          ) : null}
+
+          <div className="mt-2 rounded-lg border border-slate-200 bg-slate-50 px-3 py-2 text-xs">
+            {audienceIsManual ? (
+              <div className="flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                <span className="text-slate-500">Entered: {formatCount(manual.entered)}</span>
+                <span className="text-slate-500">−{formatCount(manual.duplicates)} Duplicate</span>
+                <span className="text-orange-600">
+                  −{formatCount(manual.optedOut)} Opted-Out
+                </span>
+                <span className="font-semibold text-emerald-700">
+                  = {formatCount(manual.numbers.length)} Valid
+                </span>
+              </div>
+            ) : (
+              <>
+                <p className="font-medium text-slate-600">All Contacts (Default)</p>
+                <div className="mt-1 flex flex-wrap items-center gap-x-2 gap-y-0.5">
+                  <span className="text-slate-500">
+                    Raw: {rawAudience === null ? "—" : formatCount(rawAudience)}
+                  </span>
+                  <span className="text-orange-600">
+                    −{optOutCount === null ? "—" : formatCount(optOutCount)} Opted-Out
+                  </span>
+                  <span className="font-semibold text-emerald-700">
+                    = {formatCount(recipients)} Valid
+                  </span>
+                </div>
+              </>
+            )}
           </div>
-        </div>
+          <FieldError message={manualError} />
+        </fieldset>
 
         {/* 3. Message body + live estimator */}
         <div>

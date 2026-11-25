@@ -35,6 +35,7 @@ import {
   messageBudget as clientBudget,
   normalizeUkMobile as clientNormalize,
   parseManualRecipients as clientParseManualRecipients,
+  summarizeManualRecipients as clientSummarizeManualRecipients,
 } from "../web/src/lib/sms.js";
 import {
   describeScheduleProblem,
@@ -122,6 +123,23 @@ test("8.x/12.3 client parseManualRecipients matches the server for a matrix", ()
       `input: ${JSON.stringify(raw)}`,
     );
   }
+});
+
+test("12.4 client summarizeManualRecipients counts entered/duplicate/opted-out/valid", () => {
+  const optOutSet = new Set(["+447700900079"]);
+  const summary = clientSummarizeManualRecipients(
+    "+447700900077, 07700900077\n07700900078\n+447700900079\nhello",
+    optOutSet,
+  );
+  assert.equal(summary.entered, 5);
+  assert.equal(summary.duplicates, 1);
+  assert.equal(summary.optedOut, 1);
+  assert.deepEqual(summary.numbers, ["+447700900077", "+447700900078"]);
+  assert.deepEqual(summary.invalid, ["hello"]);
+
+  // Empty list yields zero counts and no valid numbers (drives the Send guard).
+  const empty = clientSummarizeManualRecipients("  \n , ; \t", optOutSet);
+  assert.deepEqual(empty, { entered: 0, duplicates: 0, optedOut: 0, numbers: [], invalid: [] });
 });
 
 test("8.x client schedule pre-check agrees with the server for valid slots", () => {

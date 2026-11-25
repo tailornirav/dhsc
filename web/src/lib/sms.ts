@@ -176,3 +176,50 @@ export function parseManualRecipients(raw: string): ManualRecipients {
 
   return { numbers, invalid };
 }
+
+/** Counts for the audience sanitization strip when "Specific Numbers" is selected. */
+export interface ManualRecipientSummary {
+  /** Non-empty, trimmed entries the operator typed. */
+  entered: number;
+  /** Valid entries dropped because the same normalised number already appeared. */
+  duplicates: number;
+  /** Valid, de-duplicated numbers found on the opt-out blacklist. */
+  optedOut: number;
+  /** Final billable numbers (valid − opted-out), order-preserving. */
+  numbers: string[];
+  /** Entries that failed normalization, exactly as the operator typed them. */
+  invalid: string[];
+}
+
+/**
+ * Derive the pasted-list strip counts (`Entered → −Duplicate → −Opted-Out → = Valid`,
+ * prototype.md §5.1). Builds on the mirrored `parseManualRecipients` so the "Valid" number is
+ * identical to what the server will enqueue. The opt-out set is the client's normalised blacklist
+ * (`+447…`); only convenience feedback — the server re-checks opt-outs at dispatch (mission §8.4).
+ */
+export function summarizeManualRecipients(
+  raw: string,
+  optOutSet: ReadonlySet<string>,
+): ManualRecipientSummary {
+  const { numbers, invalid } = parseManualRecipients(raw);
+
+  let entered = 0;
+  const validSeen = new Set<string>();
+  let duplicates = 0;
+  for (const entry of raw.split(/[\n,;]+/)) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue;
+    entered += 1;
+    const normalized = normalizeUkMobile(trimmed);
+    if (normalized === null || validSeen.has(normalized)) {
+      if (normalized !== null) duplicates += 1;
+      continue;
+    }
+    validSeen.add(normalized);
+  }
+
+  const billable = numbers.filter((n) => !optOutSet.has(n));
+  const optedOut = numbers.length - billable.length;
+
+  return { entered, duplicates, optedOut, numbers: billable, invalid };
+}

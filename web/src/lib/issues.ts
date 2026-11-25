@@ -18,6 +18,8 @@ export function FieldIssuesFromIssues(issues: ValidationIssue[]): FieldIssues {
     else if (issue.field === "message" && mapped.message === undefined) mapped.message = issue.message;
     else if (issue.field === "scheduleLocal" && mapped.scheduleLocal === undefined) {
       mapped.scheduleLocal = issue.message;
+    } else if (issue.field === "recipients" && mapped.recipients === undefined) {
+      mapped.recipients = issue.message;
     }
   }
   return mapped;

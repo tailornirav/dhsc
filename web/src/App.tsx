@@ -46,6 +46,8 @@ const EMPTY_DRAFT: CampaignDraft = {
   message: "",
   mode: "IMMEDIATE",
   scheduleLocal: "",
+  audienceSource: "all",
+  recipients: "",
 };
 
 /** Polling cadence while something is in flight (the queue settles batches within seconds). */
@@ -95,6 +97,12 @@ function Dashboard(): React.JSX.Element {
     return optOuts.data.validRecipientCount + optOuts.data.count;
   }, [optOuts.data]);
 
+  // The normalised opt-out numbers, so the panel can flag pasted numbers on the blacklist.
+  const optOutSet = useMemo(
+    () => new Set((optOuts.data?.optOuts ?? []).map((entry) => entry.number)),
+    [optOuts.data],
+  );
+
   // ---- actions ------------------------------------------------------------------------
   const refreshAll = useCallback(() => {
     balance.refresh();
@@ -118,6 +126,8 @@ function Dashboard(): React.JSX.Element {
         message: draft.message.trim(),
         mode: draft.mode,
         scheduleLocal: draft.mode === "SCHEDULED" ? draft.scheduleLocal : undefined,
+        // Only send the pasted list when the operator chose the manual audience source.
+        recipients: draft.audienceSource === "manual" ? draft.recipients : undefined,
       });
       toast.success(
         draft.mode === "SCHEDULED"
@@ -191,6 +201,7 @@ function Dashboard(): React.JSX.Element {
             optOutCount={optOutCount}
             validRecipients={validRecipients}
             balance={balanceCredits}
+            optOutSet={optOutSet}
             fieldIssues={fieldIssues}
             submitting={submitting}
             onOpenTest={() => setTestOpen(true)}

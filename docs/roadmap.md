@@ -776,24 +776,24 @@
   (same inputs → identical `{ numbers, invalid }` on both sides).
 - **Verify:** `npm test` green; `npm run typecheck:web` clean.
 
-### 12.4 ☐ UI: audience-source toggle + paste box in `CreateCampaignPanel`
+### 12.4 ✅ UI: audience-source toggle + paste box in `CreateCampaignPanel`
 
-- **12.4.1 ☐** Add an audience-source control to the **Target Audience** block (prototype.md
+- **12.4.1 ✅** Add an audience-source control to the **Target Audience** block (prototype.md
   §5.1): two options — `All Contacts` (default, today's read-only strip) and `Specific Numbers`
   (a `role="radiogroup"`/radio pair, matching the existing Delivery-Schedule radios for style).
   When `Specific Numbers` is selected, reveal a `<textarea>` (labelled, `font-mono`, placeholder
   like `+447700900077, 07700900078` — one per line or comma-separated) and swap the sanitization
   strip for the pasted-list counts: `Entered → −Duplicate → −Opted-Out → = Valid`.
-- **12.4.2 ☐** Extend `CampaignDraft` with the new field (e.g. `recipients: string` and an
+- **12.4.2 ✅** Extend `CampaignDraft` with the new field (e.g. `recipients: string` and an
   `audienceSource: 'all' | 'manual'`); thread it through `App.tsx`'s `EMPTY_DRAFT` and
   `submitCampaign` (send `recipients` only when `audienceSource === 'manual'`). The live estimator
   and the cost/affordability guard must use the **manual** valid count when that source is active
   (it drives `Recipients` and `Total Est. Cost`).
-- **12.4.3 ☐** Extend the guards so `Send`/`Schedule` are disabled when `Specific Numbers` is
+- **12.4.3 ✅** Extend the guards so `Send`/`Schedule` are disabled when `Specific Numbers` is
   selected and the parsed list has **zero valid** entries or any invalid entry — surface the
   invalid lines inline via the existing `FieldIssues`/`FieldError` path (add `recipients` to
   `FieldIssues`). Client validation stays **convenience only**; the server remains authoritative.
-- **12.4.4 ☐** Update `prototype.md` §5.1 and §1 (item 2) to describe the toggle so the UI
+- **12.4.4 ✅** Update `prototype.md` §5.1 and §1 (item 2) to describe the toggle so the UI
   reference is not stale. **Verify:** `npm run typecheck:web` clean; `npm run build` succeeds;
   manual dev-backend walk (`npm run dev` + `npm run dev:web`) shows the toggle, the strip, the
   disabled-guard behaviour, and a `202` on a small valid list. **No live provider call on
