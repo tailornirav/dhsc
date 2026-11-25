@@ -114,6 +114,8 @@ export function createCampaign(input: {
   message: string;
   mode: "IMMEDIATE" | "SCHEDULED";
   scheduleLocal?: string;
+  /** Pasted recipient list for a "specific numbers" send; omitted for "all contacts". */
+  recipients?: string;
 }): Promise<CreateCampaignResponse> {
   return request<CreateCampaignResponse>("/api/campaigns", {
     method: "POST",

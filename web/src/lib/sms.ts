@@ -138,3 +138,41 @@ export function normalizeUkMobile(input: string): string | null {
   if (!/^07\d{9}$/.test(national)) return null;
   return "+44" + national.slice(1);
 }
+
+/** Result of parsing a pasted manual recipient list (mirror of the server type). */
+export interface ManualRecipients {
+  /** Valid, deduplicated, E.164-normalised numbers (order-preserving). */
+  numbers: string[];
+  /** Entries that failed normalization, exactly as the operator typed them. */
+  invalid: string[];
+}
+
+/**
+ * Parse an operator-pasted recipient list into normalised numbers plus the raw bad entries.
+ *
+ * A **byte-for-byte behavioural mirror** of `parseManualRecipients` in the Worker's
+ * `src/lib/validate.ts` (tech.md §10): splits on newlines, commas, and semicolons (with
+ * surrounding whitespace), normalises each entry with the local `normalizeUkMobile`, de-duplicates
+ * the valid set while preserving first-seen order, and returns the invalid entries **as given** so
+ * the UI can surface the offending value inline. Client validation is convenience only — the
+ * server remains authoritative (tech.md §9.4, roadmap 12.3.1). Keep in sync with the server.
+ */
+export function parseManualRecipients(raw: string): ManualRecipients {
+  const numbers: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of raw.split(/[\n,;]+/)) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue;
+    const normalized = normalizeUkMobile(trimmed);
+    if (normalized === null) {
+      invalid.push(trimmed);
+    } else if (!seen.has(normalized)) {
+      seen.add(normalized);
+      numbers.push(normalized);
+    }
+  }
+
+  return { numbers, invalid };
+}

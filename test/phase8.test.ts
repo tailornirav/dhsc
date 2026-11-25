@@ -23,6 +23,7 @@ import {
 import {
   messageBudget as serverBudget,
   normalizeUkMobile as serverNormalize,
+  parseManualRecipients as serverParseManualRecipients,
   validateCampaign,
 } from "../src/lib/validate.js";
 import { validateUkSchedule } from "../src/lib/uk-time.js";
@@ -33,6 +34,7 @@ import {
   estimatedCredits as clientCredits,
   messageBudget as clientBudget,
   normalizeUkMobile as clientNormalize,
+  parseManualRecipients as clientParseManualRecipients,
 } from "../web/src/lib/sms.js";
 import {
   describeScheduleProblem,
@@ -96,6 +98,29 @@ test("8.x client UK-mobile normalisation matches the server", () => {
   ];
   for (const input of inputs) {
     assert.equal(clientNormalize(input), serverNormalize(input), `input: ${input}`);
+  }
+});
+
+test("8.x/12.3 client parseManualRecipients matches the server for a matrix", () => {
+  const inputs = [
+    "",
+    "  \n , ; \t",
+    "+447700900077",
+    "  +447700900077 \n 07700900078, 447700900079 ;\t0770-0900-080\n\n",
+    "+447700900077, 07700900077\n+447700900078, +447700900077",
+    "hello, +441234, +447700900077\n not a number ",
+    "+44 7700 900077; (0770) 900077",
+    "07700900077",
+    "+353871234567",
+    "+44770090007",
+    ";;;\n\n,,,",
+  ];
+  for (const raw of inputs) {
+    assert.deepEqual(
+      clientParseManualRecipients(raw),
+      serverParseManualRecipients(raw),
+      `input: ${JSON.stringify(raw)}`,
+    );
   }
 });
 

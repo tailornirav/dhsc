@@ -764,15 +764,15 @@
 - **Verify:** `npm test` green (new count > 132); `npm run typecheck` + `npx tsc --noEmit -p
   test/tsconfig.json` clean. **No live provider call.**
 
-### 12.3 ☐ Client: mirror the parser + extend the API call
+### 12.3 ✅ Client: mirror the parser + extend the API call
 
-- **12.3.1 ☐** Add `parseManualRecipients` to `web/src/lib/sms.ts` (or a small new
+- **12.3.1 ✅** Add `parseManualRecipients` to `web/src/lib/sms.ts` (or a small new
   `web/src/lib/recipients.ts`) as a **byte-for-byte behavioural mirror** of the server function,
   exactly like the existing `sms.ts`/`time.ts` mirrors (tech.md §10). Reuse the client's
   `normalizeUkMobile` equivalent if one exists; if the client has none, mirror it too.
-- **12.3.2 ☐** Add `recipients?: string` to the `createCampaign` input in `web/src/api.ts`
+- **12.3.2 ✅** Add `recipients?: string` to the `createCampaign` input in `web/src/api.ts`
   (pass-through only; omit the key entirely when the mode is "all contacts").
-- **12.3.3 ☐** Extend `test/phase8.test.ts` with the mirror-parity matrix for the new parser
+- **12.3.3 ✅** Extend `test/phase8.test.ts` with the mirror-parity matrix for the new parser
   (same inputs → identical `{ numbers, invalid }` on both sides).
 - **Verify:** `npm test` green; `npm run typecheck:web` clean.
 
