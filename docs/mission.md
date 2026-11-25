@@ -145,6 +145,14 @@ These are now **settled facts**. Treat them as requirements, not preferences.
 8. **Concurrency/rate limits:** use the **defaults** (`max_batch_size: 5`,
    `max_concurrency: 2`, `max_retries: 5`). Sendmode publishes no rate limit we must throttle
    below; if Cloudflare or the provider surfaces throttling in practice, revisit these values.
+9. **CSRF / same-origin enforcement (roadmap 11.2):** the Worker **enforces same-origin on
+   unsafe methods** for the whole `/api/*` surface (authenticated routes and the public
+   opt-out mutation alike): any `POST`/`PUT`/`PATCH`/`DELETE` carrying an `Origin` whose host
+   does not match the request host is rejected `403 { error: 'cross_origin_blocked' }`; an
+   absent `Origin` is allowed and `GET` is never blocked (`isSameOrigin()` in
+   `src/lib/hardening.ts`, wired into the `/api/*` guard in `src/index.ts`). Chosen as a cheap,
+   stateless backstop that **complements** Cloudflare Access and the Access cookie's `SameSite`
+   attribute — it does not replace them, and it is not a per-request CSRF token.
 
 ### Still genuinely open
 
@@ -156,10 +164,6 @@ These are now **settled facts**. Treat them as requirements, not preferences.
 
 ### Open pending Phase 11 (see `roadmap.md` Phase 11 — resolve when each step lands)
 
-- **CSRF / same-origin enforcement (11.2):** the authenticated `/api/*` surface is currently
-  protected by the Cloudflare Access cookie alone. Decision needed: enforce same-origin on
-  unsafe methods in the Worker (recommended) and/or rely on the Access cookie's `SameSite`
-  attribute. Until resolved, treat cross-site mutation as an unmitigated risk.
 - **Scheduled-send opt-out re-check (11.3):** the blacklist is documented as *always* stripped
   from every audience, but it is currently applied only at **create** time. Decision to confirm:
   re-check `opt_outs` at **dispatch** time for scheduled campaigns so the guarantee holds at

@@ -53,6 +53,49 @@ export const SECURITY_HEADERS = {
 export const MAX_BODY_BYTES = 64 * 1024;
 
 // ---------------------------------------------------------------------------------------
+// Same-origin (CSRF) backstop
+// ---------------------------------------------------------------------------------------
+
+/** Methods that change state and therefore warrant a same-origin check. */
+const UNSAFE_METHODS = new Set(["POST", "PUT", "PATCH", "DELETE"]);
+
+/**
+ * Stateless same-origin check for **unsafe** methods (roadmap 11.2, tech.md §9).
+ *
+ * The authenticated `/api/*` surface is otherwise protected only by the Cloudflare Access
+ * cookie, so a cross-site request could ride that cookie and trigger a real send (money,
+ * irreversible). This is a cheap, dependency-free backstop — not a CSRF token.
+ *
+ * Rule:
+ *   - Safe methods (`GET`/`HEAD`/`OPTIONS`) are never blocked.
+ *   - An unsafe request with **no** `Origin` header is allowed: same-origin browsers omit it
+ *     for some simple requests, and non-browser clients (`curl`, tests) send none. This keeps
+ *     the check from breaking existing callers.
+ *   - An unsafe request whose `Origin` is present **and** whose host does not match the
+ *     request host is rejected.
+ *
+ * Compared as **host** (hostname + port) rather than full origin, because the Worker commonly
+ * sits behind a proxy where the scheme may differ between the internal request URL and the
+ * browser-visible `Origin`.
+ */
+export function isSameOrigin(c: Context): boolean {
+  if (!UNSAFE_METHODS.has(c.req.method.toUpperCase())) return true;
+
+  const origin = c.req.header("Origin");
+  if (!origin) return true;
+
+  let originHost: string;
+  try {
+    originHost = new URL(origin).host;
+  } catch {
+    // A malformed `Origin` is not a same-origin signal — reject it.
+    return false;
+  }
+
+  return originHost === new URL(c.req.url).host;
+}
+
+// ---------------------------------------------------------------------------------------
 // In-memory fixed-window rate limiter
 // ---------------------------------------------------------------------------------------
 

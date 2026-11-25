@@ -7,6 +7,7 @@ import type { Env, AppEnv } from "./env.js";
 import {
   MAX_BODY_BYTES,
   SECURITY_HEADERS,
+  isSameOrigin,
   publicRouteLimiter,
   rateLimit,
 } from "./lib/hardening.js";
@@ -58,9 +59,14 @@ export function createApp(): Hono<AppEnv> {
 
   // --------------------------------------------------------------------------------------
   // API guard — one middleware for the whole `/api/*` group with the opt-out carve-out.
-  // Public paths skip auth but are instead rate-limited per client IP.
+  // First a stateless same-origin backstop on unsafe methods (roadmap 11.2): this covers the
+  // whole group, so both the authenticated routes and the public opt-out mutation are checked
+  // by the one rule. Public paths then skip auth but are instead rate-limited per client IP.
   // --------------------------------------------------------------------------------------
   app.use("/api/*", async (c, next) => {
+    if (!isSameOrigin(c)) {
+      return c.json({ error: "cross_origin_blocked" }, 403);
+    }
     if (isPublicApiPath(new URL(c.req.url).pathname)) {
       return publicLimit(c, next);
     }

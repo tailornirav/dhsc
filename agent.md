@@ -44,9 +44,11 @@ disagree, fix both in the same change.
 > work is polish/security/deploy, whose automatable checks pass locally and whose live steps
 > (`wrangler secret put`, `wrangler deploy`, a real test SMS) are ops actions. See `README.md` for
 > the runbook. **A full code review (Phases 0–10) produced `roadmap.md` Phase 11** — a set of
-> real, unfixed defects (public opt-out form returns JSON, no CSRF/`Origin` check on mutations,
-> opt-outs not re-checked at dispatch for scheduled sends, and others). Phase 11 is the current
-> work; do not report those areas as "done" until it lands.
+> real defects. **11.1** (public opt-out form now returns an HTML confirmation) and **11.2**
+> (same-origin/CSRF backstop on mutating `/api/*` routes) are **fixed**; the must-fix remainder
+> is **11.3** (opt-outs not re-checked at dispatch for scheduled sends), with 11.4–11.8 as
+> correctness/polish. Phase 11 is the current work; do not report the remaining areas as "done"
+> until they land.
 
 ---
 

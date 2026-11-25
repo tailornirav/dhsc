@@ -362,12 +362,20 @@ per `request_id`.
 5. **Payload safety:** queue messages are only enqueued by authenticated routes, so consumer
    handlers can trust their schema — but still re-check DB state (idempotency guards).
 6. **No data leakage:** error responses return safe messages, never stack traces or secrets.
+7. **Same-origin enforcement on mutations (CSRF backstop, roadmap 11.2):** the `/api/*` guard
+   (`src/index.ts`, via `isSameOrigin()` in `src/lib/hardening.ts`) rejects any **unsafe** method
+   (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is present and whose host does not match
+   the request host — `403 { error: 'cross_origin_blocked' }`. An absent `Origin` is allowed, so
+   `curl`/tests/non-browser clients and same-origin simple requests are unaffected; `GET` is
+   never blocked. This is a cheap, stateless backstop that **complements** Cloudflare Access (and
+   the Access cookie's `SameSite` attribute) — it does **not** replace them, and it is not a CSRF
+   token.
 
 > **Known gaps tracked in `roadmap.md` Phase 11** (found in a full review; not yet fixed):
-> the public opt-out form currently receives raw JSON instead of an HTML confirmation (11.1);
-> mutating `/api/*` routes have no CSRF/`Origin` check (11.2); the opt-out blacklist is applied
-> at create time only, not re-checked at dispatch for scheduled sends (11.3). Do not treat the
-> items above as fully guaranteed until Phase 11 lands.
+> the opt-out blacklist is applied at create time only, not re-checked at dispatch for scheduled
+> sends (11.3). Do not treat that item as fully guaranteed until Phase 11 lands. (11.1, the
+> public opt-out form now returning an HTML confirmation, and 11.2, the same-origin backstop
+> above, are fixed.)
 
 ---
 

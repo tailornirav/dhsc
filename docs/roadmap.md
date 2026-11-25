@@ -541,27 +541,38 @@
   form post → `400` HTML error. **Verified:** `npm test` (122 total) all green;
   `npm run typecheck` clean.
 
-### 11.2 ☐ CSRF / same-origin protection on mutating routes
+### 11.2 ✅ CSRF / same-origin protection on mutating routes
 
 > **Defect.** Every state-changing `/api/*` route is protected **only** by the Cloudflare Access
 > cookie; there is **no** CSRF token and **no** `Origin`/`Referer` check anywhere (grep for
 > `Origin`/`csrf`/`SameSite` returns zero hits). A cross-site request riding the Access cookie
 > could trigger a real send — which spends money and cannot be undone.
 
-- **11.2.1 ☐** In the `/api/*` guard (`src/index.ts`, next to `requireAuth`), reject any
+> **Landed.** `isSameOrigin(c)` (`src/lib/hardening.ts`) is now the single statement of the rule
+> and is wired into the `/api/*` guard in `src/index.ts` **before** auth, so it covers the whole
+> group: authenticated routes *and* the public `/api/opt-out` mutation. Any unsafe method whose
+> `Origin` is present and whose **host** does not match the request host gets
+> `403 { error: 'cross_origin_blocked' }`; an absent `Origin` is allowed and safe methods are
+> never blocked. Seven new tests in `test/phase5.test.ts` (suite now 130 green;
+> `npm run typecheck` clean).
+
+- **11.2.1 ✅** In the `/api/*` guard (`src/index.ts`, next to `requireAuth`), reject any
   **unsafe** method (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is present **and** does
   not match the request host — `403 { error: 'cross_origin_blocked' }`. Absent `Origin`
   (same-origin browsers omit it for simple requests, and tests/non-browser clients may too) is
   allowed, so this is a cheap, stateless backstop that does not break `curl`/tests.
-- **11.2.2 ☐** Apply the same check to the **public** `/api/opt-out` path (it is also a mutation).
-  Keep it in one helper (e.g. `isSameOrigin(c)` in `src/lib/hardening.ts`) so the rule is stated
-  once.
-- **11.2.3 ☐** Add tests: same-origin POST → allowed; `Origin: https://evil.example` POST → `403`;
-  GET is never blocked; the public form post with the production origin still succeeds.
-  **Verify:** `npm test` green; `npm run typecheck` clean.
-- **11.2.4 ☐** Document in `tech.md` §9 (new sub-point) that the Worker now enforces same-origin
-  on mutations and that this complements (does not replace) Cloudflare Access; record the
-  decision in `mission.md` §8.
+- **11.2.2 ✅** Applied to the **public** `/api/opt-out` path too (it is also a mutation) — the
+  same guard runs before the public carve-out, so one helper (`isSameOrigin(c)` in
+  `src/lib/hardening.ts`) states the rule once.
+- **11.2.3 ✅** Tests added in `test/phase5.test.ts`: absent-`Origin` POST → allowed; same-origin
+  POST → allowed; `Origin: https://evil.example` POST → `403 cross_origin_blocked`; the same on
+  `DELETE`; `GET` never blocked; the foreign origin is blocked *before* auth (anonymous ⇒ 403, not
+  401); the public `/api/opt-out` mutation is blocked from a foreign origin and still reaches the
+  handler from a same-origin one. **Verified:** `npm test` (130 total) all green;
+  `npm run typecheck` clean.
+- **11.2.4 ✅** Documented in `tech.md` §9 (new sub-point 7) that the Worker enforces same-origin
+  on mutations and that it complements (does not replace) Cloudflare Access; the decision is
+  recorded in `mission.md` §8 (item 9).
 
 ### 11.3 ☐ Re-check opt-outs at dispatch time (scheduled sends)
 

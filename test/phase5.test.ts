@@ -284,3 +284,134 @@ test("body limit rejects an oversized request body (413)", async () => {
   );
   assert.equal(res.status, 413);
 });
+
+// ======================================================================================
+// Phase 11.2 — CSRF / same-origin backstop on mutating routes
+// ======================================================================================
+
+test("11.2 an unsafe request with no Origin is allowed (curl/tests/simple requests)", async () => {
+  const probe = createApp();
+  probe.post("/api/echo", (c) => c.json({ ok: true }));
+
+  const res = await probe.request(
+    "/api/echo",
+    { method: "POST", headers: { [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk" } },
+    testEnv(),
+  );
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true });
+});
+
+test("11.2 an unsafe request from the same origin (matching host) is allowed", async () => {
+  const probe = createApp();
+  probe.post("/api/echo", (c) => c.json({ ok: true }));
+
+  const res = await probe.request(
+    "/api/echo",
+    {
+      method: "POST",
+      headers: {
+        Origin: "http://localhost",
+        [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk",
+      },
+    },
+    testEnv(),
+  );
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true });
+});
+
+test("11.2 an unsafe request from a foreign Origin is rejected (403 cross_origin_blocked)", async () => {
+  const probe = createApp();
+  probe.post("/api/echo", (c) => c.json({ ok: true }));
+
+  const res = await probe.request(
+    "/api/echo",
+    {
+      method: "POST",
+      headers: {
+        Origin: "https://evil.example",
+        [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk",
+      },
+    },
+    testEnv(),
+  );
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "cross_origin_blocked" });
+});
+
+test("11.2 the cross-origin check also covers DELETE and reaches routing otherwise", async () => {
+  const probe = createApp();
+  probe.delete("/api/echo", (c) => c.json({ ok: true }));
+
+  const blocked = await probe.request(
+    "/api/echo",
+    {
+      method: "DELETE",
+      headers: { Origin: "https://evil.example", [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk" },
+    },
+    testEnv(),
+  );
+  assert.equal(blocked.status, 403);
+  assert.deepEqual(await blocked.json(), { error: "cross_origin_blocked" });
+
+  const allowed = await probe.request(
+    "/api/echo",
+    { method: "DELETE", headers: { [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk" } },
+    testEnv(),
+  );
+  assert.equal(allowed.status, 200);
+});
+
+test("11.2 GET is never blocked, even with a foreign Origin", async () => {
+  const res = await app.request(
+    "/api/health",
+    { headers: { Origin: "https://evil.example", [CF_ACCESS_EMAIL_HEADER]: "operator@dhsc.uk" } },
+    testEnv(),
+  );
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { status: "ok" });
+});
+
+test("11.2 a foreign Origin is blocked before auth (no Access identity still ⇒ 403)", async () => {
+  // The same-origin check runs first in the guard: a cross-site attempt never reaches auth,
+  // so it cannot even probe whether it is authenticated.
+  const res = await app.request("/api/balance", { method: "POST", headers: { Origin: "https://evil.example" } }, testEnv());
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "cross_origin_blocked" });
+});
+
+test("11.2 the public opt-out mutation is protected too (foreign Origin ⇒ 403)", async () => {
+  const res = await app.request(
+    "/api/opt-out",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        Origin: "https://evil.example",
+      },
+      body: "number=07700900002",
+    },
+    testEnv(),
+  );
+  assert.equal(res.status, 403);
+  assert.deepEqual(await res.json(), { error: "cross_origin_blocked" });
+});
+
+test("11.2 the public form post with the same (production) origin still succeeds", async () => {
+  const res = await app.request(
+    "/api/opt-out",
+    {
+      method: "POST",
+      headers: {
+        "Content-Type": "application/x-www-form-urlencoded",
+        // The `/x` page posts same-origin; the browser sends this Origin.
+        Origin: "http://localhost",
+      },
+      body: "number=12345",
+    },
+    testEnv(),
+  );
+  // Reaches the handler (which rejects the invalid number) rather than the origin check.
+  assert.equal(res.status, 400);
+});
