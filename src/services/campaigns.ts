@@ -130,6 +130,49 @@ export async function insertCampaign(db: D1Database, campaign: NewCampaign): Pro
 }
 
 // ---------------------------------------------------------------------------------------
+// Flow A — create idempotency (roadmap 13.2)
+// ---------------------------------------------------------------------------------------
+
+/**
+ * Look up a previously stored create result by its client `Idempotency-Key` (roadmap 13.2.1).
+ * Returns the stored `202` body string (exactly as first returned) when the key has been seen,
+ * or `null` when it is new. A caller with a `null` result proceeds with the normal create flow.
+ *
+ * No provider call: this is a pure read so the route can short-circuit *before* any spend.
+ */
+export async function getIdempotentResult(db: D1Database, key: string): Promise<string | null> {
+  const row = await firstRow<{ response_json: string }>(
+    db,
+    "SELECT response_json FROM idempotency_keys WHERE key = ?",
+    key,
+  );
+  return row?.response_json ?? null;
+}
+
+/**
+ * Persist a create result under its `Idempotency-Key` (roadmap 13.2.2) so a retry of the same
+ * submission replays it instead of creating a second campaign (and a second spend).
+ *
+ * A short standalone `INSERT` keeps the D1 per-invocation budget untouched; the primary key on
+ * `key` makes a concurrent duplicate a no-op, so an overlapping retry can never double-write.
+ */
+export async function saveIdempotentResult(
+  db: D1Database,
+  key: string,
+  campaignId: string,
+  responseJson: string,
+  now: string,
+): Promise<void> {
+  await db
+    .prepare(
+      `INSERT OR IGNORE INTO idempotency_keys (key, campaign_id, response_json, created_at)
+       VALUES (?, ?, ?, ?)`,
+    )
+    .bind(key, campaignId, responseJson, now)
+    .run();
+}
+
+// ---------------------------------------------------------------------------------------
 // Queue fan-out
 // ---------------------------------------------------------------------------------------
 

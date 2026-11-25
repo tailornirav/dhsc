@@ -56,6 +56,13 @@ interface OptOutRow {
   mobile_number: string;
   created_at: string;
 }
+/** Phase 13 — create idempotency key → stored response. */
+interface IdempotencyRow {
+  key: string;
+  campaign_id: string;
+  response_json: string;
+  created_at: string;
+}
 
 /** A prepared statement that defers execution against the owning database. */
 class FakeStatement {
@@ -94,6 +101,7 @@ export class FakeD1 {
   campaigns: CampaignRow[] = [];
   batches: BatchRow[] = [];
   optOuts: OptOutRow[] = [];
+  idempotencyKeys: IdempotencyRow[] = [];
 
   /** Seed `audience_chunks` from plain number arrays (chunk index = array position). */
   seedAudience(chunks: string[][]): void {
@@ -140,6 +148,11 @@ export class FakeD1 {
     }
     if (q.startsWith("SELECT mobile_number, created_at FROM opt_outs")) {
       return [...this.optOuts].sort((a, b) => (a.created_at < b.created_at ? 1 : -1));
+    }
+    if (q.startsWith("SELECT response_json FROM idempotency_keys WHERE key = ?")) {
+      return this.idempotencyKeys
+        .filter((r) => r.key === params[0])
+        .map((r) => ({ response_json: r.response_json }));
     }
     if (q.startsWith("SELECT * FROM campaigns WHERE id = ?")) {
       return this.campaigns.filter((c) => c.id === params[0]);
@@ -211,6 +224,16 @@ export class FakeD1 {
   executeWrite(sql: string, params: unknown[]): number {
     const q = FakeD1.norm(sql);
 
+    if (q.startsWith("INSERT OR IGNORE INTO idempotency_keys")) {
+      if (this.idempotencyKeys.some((r) => r.key === params[0])) return 0;
+      this.idempotencyKeys.push({
+        key: params[0] as string,
+        campaign_id: params[1] as string,
+        response_json: params[2] as string,
+        created_at: params[3] as string,
+      });
+      return 1;
+    }
     if (q.startsWith("INSERT INTO campaigns")) {
       this.campaigns.push({
         id: params[0] as string,

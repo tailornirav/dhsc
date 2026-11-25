@@ -78,3 +78,16 @@ export const optOuts = sqliteTable("opt_outs", {
   mobileNumber: text("mobile_number").primaryKey(),
   createdAt: text("created_at").notNull(),
 });
+
+/**
+ * Create idempotency (roadmap Phase 13). One row per client-supplied
+ * `Idempotency-Key`, so a retry/resubmit of `POST /api/campaigns` replays the
+ * stored `202` body instead of creating a second campaign (and a second spend).
+ * Written and replayed by `src/services/campaigns.ts`.
+ */
+export const idempotencyKeys = sqliteTable("idempotency_keys", {
+  key: text("key").primaryKey(), // client UUID (Idempotency-Key header)
+  campaignId: text("campaign_id").notNull(), // the campaign this key created
+  responseJson: text("response_json").notNull(), // the stored 202 body, replayed on a repeat
+  createdAt: text("created_at").notNull(),
+});

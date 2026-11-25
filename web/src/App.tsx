@@ -13,7 +13,7 @@
  * progress and a CANCELLING campaign settle on their own without a manual refresh.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import { ApiError, createCampaign } from "./api";
 import { SENDER_ID } from "./config";
@@ -67,6 +67,12 @@ function Dashboard(): React.JSX.Element {
   const [cancelling, setCancelling] = useState(false);
   const [cancelError, setCancelError] = useState<string | null>(null);
 
+  // Create idempotency (Phase 13): one key per submit *attempt*, kept across retries of that
+  // same submission so a resubmit replays the original result rather than double-spending.
+  // Cleared on success (the draft resets) and on a validation failure (the operator edits the
+  // draft, which is genuinely a new submission).
+  const idempotencyKey = useRef<string | null>(null);
+
   // ---- data ---------------------------------------------------------------------------
   const balance = useBalance();
   const optOuts = useOptOuts();
@@ -119,6 +125,10 @@ function Dashboard(): React.JSX.Element {
   const submitCampaign = async () => {
     setFieldIssues({});
     setSubmitting(true);
+    // Mint the idempotency key once per submission attempt; reuse it on a retry after a
+    // transport/provider failure so the safe replay kicks in server-side.
+    const key = idempotencyKey.current ?? crypto.randomUUID();
+    idempotencyKey.current = key;
     try {
       const result = await createCampaign({
         name: draft.name.trim(),
@@ -128,6 +138,7 @@ function Dashboard(): React.JSX.Element {
         scheduleLocal: draft.mode === "SCHEDULED" ? draft.scheduleLocal : undefined,
         // Only send the pasted list when the operator chose the manual audience source.
         recipients: draft.audienceSource === "manual" ? draft.recipients : undefined,
+        idempotencyKey: key,
       });
       toast.success(
         draft.mode === "SCHEDULED"
@@ -135,11 +146,15 @@ function Dashboard(): React.JSX.Element {
           : `“${draft.name.trim()}” queued to ${result.totalRecipients.toLocaleString("en-GB")} recipients.`,
       );
       setDraft(EMPTY_DRAFT);
+      // The submission is done; the next create is a brand-new one with its own key.
+      idempotencyKey.current = null;
       // Show the operator the tab its campaign landed in.
       setActiveTab(draft.mode === "SCHEDULED" ? "queued" : "history");
       refreshAll();
     } catch (error) {
       if (error instanceof ApiError && error.isValidation) {
+        // A validation rejection means the operator must edit the draft — a new submission.
+        idempotencyKey.current = null;
         setFieldIssues(FieldIssuesFromIssues(error.issues));
         toast.error(error.issues[0]?.message ?? "Please fix the highlighted fields.");
       } else {

@@ -116,10 +116,17 @@ export function createCampaign(input: {
   scheduleLocal?: string;
   /** Pasted recipient list for a "specific numbers" send; omitted for "all contacts". */
   recipients?: string;
+  /**
+   * Client-generated UUID for create idempotency (Phase 13). Sent as `Idempotency-Key` so a
+   * retry/resubmit of the *same* attempt replays the original result instead of creating a
+   * second campaign (and a second spend). Kept constant across retries of one submission.
+   */
+  idempotencyKey?: string;
 }): Promise<CreateCampaignResponse> {
   return request<CreateCampaignResponse>("/api/campaigns", {
     method: "POST",
     body: JSON.stringify(input),
+    headers: input.idempotencyKey ? { "Idempotency-Key": input.idempotencyKey } : {},
   });
 }
 

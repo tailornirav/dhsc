@@ -25,10 +25,12 @@ import {
   chunkArray,
   getCampaign,
   getCampaignBatches,
+  getIdempotentResult,
   insertCampaign,
   listCampaigns,
   parseCampaignFilter,
   enqueueDispatch,
+  saveIdempotentResult,
   type CampaignBatchRow,
   type CampaignRow,
   type NewCampaign,
@@ -104,6 +106,18 @@ export function registerCampaignRoutes(app: Hono<AppEnv>): void {
   app.post("/api/campaigns", async (c) => {
     const parsed = await readJsonBody(c);
     if (!parsed.ok) return c.json(parsed.body, parsed.status);
+
+    // Flow A step 0 (roadmap 13.2.1): replay a previously stored result for a repeated
+    // `Idempotency-Key` *before* any balance check, write, or enqueue — a retry must never
+    // create a second campaign or a second spend. A create with no key is unchanged.
+    const idempotencyKey = c.req.header("Idempotency-Key")?.trim() || undefined;
+    if (idempotencyKey) {
+      const stored = await getIdempotentResult(c.env.DB, idempotencyKey);
+      if (stored !== null) {
+        // The stored body is the verbatim original 202 payload; return it at the same status.
+        return c.body(stored, 202, { "Content-Type": "application/json" });
+      }
+    }
 
     const validated = validateCampaign(toCampaignInput(parsed.value));
     if (!validated.ok) return c.json(issuesBody(validated.issues), 400);
@@ -194,16 +208,28 @@ export function registerCampaignRoutes(app: Hono<AppEnv>): void {
       return c.json({ error: "enqueue_failed", message }, 500);
     }
 
-    return c.json(
-      {
-        id: campaign.id,
-        status: "QUEUED",
-        totalRecipients,
-        totalBatches: batches.length,
-        estimatedCredits: credits,
-      },
-      202,
-    );
+    // Flow A step 5: build the response body once, so the same bytes can be stored under the
+    // key (when one was supplied) for replay — a retry must return an identical body.
+    const responseBody = {
+      id: campaign.id,
+      status: "QUEUED",
+      totalRecipients,
+      totalBatches: batches.length,
+      estimatedCredits: credits,
+    };
+
+    if (idempotencyKey) {
+      // Persist after the campaign rows + enqueue succeed, so we never memoise a partial create.
+      await saveIdempotentResult(
+        c.env.DB,
+        idempotencyKey,
+        campaign.id,
+        JSON.stringify(responseBody),
+        now,
+      );
+    }
+
+    return c.json(responseBody, 202);
   });
 
   // -------------------------------------------------------------------------------------

@@ -217,9 +217,13 @@ These are now **settled facts**. Treat them as requirements, not preferences.
   `GET /3.0/balance` check that refuses the send with the same `insufficient_balance` shape
   (and the same `502 provider_error` on an outage) when the balance cannot cover the credit.
   The old "not blocked by balance" behaviour and the code comment that stated it are gone.
-- **Create idempotency (13.1–13.2): PENDING.** A retried/resubmitted `POST /api/campaigns` can
-  currently create a second campaign and double-spend. Phase 13 adds the optional `Idempotency-Key`
-  header + `idempotency_keys` table (resolved decision §8.11).
+- **Create idempotency (13.1–13.2): RESOLVED.** `POST /api/campaigns` now accepts an optional
+  `Idempotency-Key` header (the SPA mints a fresh UUID per submit *attempt* and reuses it across
+  retries of that same submission). A repeated key returns the **stored original response** and does
+  nothing else — no second campaign, no second balance check, no second enqueue — so a retry,
+  resubmit, or network replay **cannot double-spend**. Keys are persisted in the `idempotency_keys`
+  table (forward-only migration 0001); a create with **no** key keeps the prior behaviour. See
+  resolved decision §8.11.
 - **Scheduled-send outcome / reconcile (13.3): PENDING.** Scheduled campaigns never leave
   `SCHEDULED` in the DB. Phase 13 adds a Cron `scheduled()` reconcile (resolved decision §8.12) —
   time-based, **not** webhooks (§8.7 stays deferred).

@@ -847,43 +847,43 @@
 > reversed; the reconcile *closes the recording gap* on its "terminal state is provider acceptance"
 > statement.
 
-### 13.1 ☐ Migration: `idempotency_keys` table
+### 13.1 ✅ Migration: `idempotency_keys` table
 
 > **Nano-step, schema only.** One new table; no column changes to existing tables.
 
-- **13.1.1 ☐** Add an `idempotencyKeys` `sqliteTable` to `src/db/schema.ts`: `key TEXT PRIMARY KEY`
+- **13.1.1 ✅** Add an `idempotencyKeys` `sqliteTable` to `src/db/schema.ts`: `key TEXT PRIMARY KEY`
   (the client `Idempotency-Key` value), `campaign_id TEXT NOT NULL`, `response_json TEXT NOT NULL`
   (the stored `202` body to replay), `created_at TEXT NOT NULL`. Mirror the Drizzle style of the
   existing tables (no invented columns beyond these).
-- **13.1.2 ☐** Emit the migration with `npx drizzle-kit generate` (forward-only; appends alongside
+- **13.1.2 ✅** Emit the migration with `npx drizzle-kit generate` (forward-only; appends alongside
   the existing migrations in `src/db/migrations/`, editing **no** prior file). Apply locally with
   `npx wrangler d1 migrations apply sms-campaigns-db --local`.
-- **13.1.3 ☐** Add the table to `docs/tech.md` §4 (done in the docs pass above — confirm it matches
+- **13.1.3 ✅** Add the table to `docs/tech.md` §4 (done in the docs pass above — confirm it matches
   the emitted SQL).
 - **Verify:** `npx drizzle-kit generate` emits exactly one new migration; `npm run typecheck` clean;
   the local apply succeeds. **No data migration, no backfill.**
 
-### 13.2 ☐ Create idempotency in `POST /api/campaigns` (+ SPA key)
+### 13.2 ✅ Create idempotency in `POST /api/campaigns` (+ SPA key)
 
 > **Nano-step.** The only behaviour change is *at the top of the create handler*; the rest of Flow A
 > is untouched on the happy path.
 
-- **13.2.1 ☐** In `src/routes/campaigns.ts` (`POST /api/campaigns`), read the optional
+- **13.2.1 ✅** In `src/routes/campaigns.ts` (`POST /api/campaigns`), read the optional
   `Idempotency-Key` request header. When present, look it up in `idempotency_keys` **before** any
   provider call or write: if the key exists, return the **stored original response** (same status
   `202` + body) and do nothing else — no balance check, no insert, no enqueue.
-- **13.2.2 ☐** When the key is new, run the create flow exactly as today; on success persist
+- **13.2.2 ✅** When the key is new, run the create flow exactly as today; on success persist
   `{ key, campaignId, responseJson, createdAt }` in the **same D1 write path** as the campaign
   insert where practical (a short follow-up `INSERT` is acceptable; keep it ≤ a couple of statements
   so the D1 per-invocation budget is untouched). A create with **no** key keeps today's behaviour
   byte-for-byte.
-- **13.2.3 ☐** Add a small service helper (e.g. `getIdempotentResult` / `saveIdempotentResult` in
+- **13.2.3 ✅** Add a small service helper (e.g. `getIdempotentResult` / `saveIdempotentResult` in
   `src/services/campaigns.ts`) so the route stays thin and the logic is unit-testable. Do **not**
   add provider calls to it.
-- **13.2.4 ☐** In the SPA (`web/src/api.ts` + the submit handler in `App.tsx`), generate a UUID
+- **13.2.4 ✅** In the SPA (`web/src/api.ts` + the submit handler in `App.tsx`), generate a UUID
   (`crypto.randomUUID()`) **per submit attempt** and send it as the `Idempotency-Key` header on
   `createCampaign`; keep the same key across retries of that one submission so a retry is safe.
-- **13.2.5 ☐** Document the header in `tech.md` §5 + Flow A step 0 (done above).
+- **13.2.5 ✅** Document the header in `tech.md` §5 + Flow A step 0 (done above).
 - **Verify:** `npm test` green; a new `test/phase6.test.ts` case posts the **same** key twice and
   asserts **one** `campaigns` row, **one** enqueue, and an identical `202` body on both calls;
   `npm run typecheck` + `npm run typecheck:web` clean. **No live provider call.**

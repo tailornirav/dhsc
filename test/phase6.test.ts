@@ -262,8 +262,60 @@ test("6.2 POST /api/campaigns schedules with a UTC date computed from UK local t
   }
 });
 
+// ---------------------------------------------------------------------------------------
+// 13.2 — create idempotency (Idempotency-Key)
+// ---------------------------------------------------------------------------------------
+
+test("13.2 POST /api/campaigns replays the stored result for a repeated Idempotency-Key", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const init = json({
+      body: { name: "Retry-safe", senderId: "DHSC", message: "Hello!", mode: "IMMEDIATE" },
+    });
+    const withKey: RequestInit = {
+      ...init,
+      headers: { "Content-Type": "application/json", "Idempotency-Key": "key-abc-123" },
+    };
+
+    const first = await app.request("/api/campaigns", withKey, makeEnv(db, queue));
+    assert.equal(first.status, 202);
+    const firstBody = await first.text();
+
+    // A byte-identical retry of the same submission: same key, same body.
+    const second = await app.request("/api/campaigns", withKey, makeEnv(db, queue));
+    assert.equal(second.status, 202);
+    assert.equal(await second.text(), firstBody);
+
+    // Exactly one campaign, one set of batches, and one enqueue happened across both calls.
+    assert.equal(db.campaigns.length, 1);
+    assert.equal(db.batches.length, 2);
+    assert.equal(queue.messages.length, 2);
+
+    // The key was persisted once, pointing at the single campaign we created.
+    assert.equal(db.idempotencyKeys.length, 1);
+    assert.equal(db.idempotencyKeys[0]?.key, "key-abc-123");
+    assert.equal(db.idempotencyKeys[0]?.campaign_id, db.campaigns[0]?.id);
+    assert.equal(db.idempotencyKeys[0]?.response_json, firstBody);
+
+    // A *different* key is a genuinely new submission and creates a second campaign.
+    const other = await app.request(
+      "/api/campaigns",
+      { ...init, headers: { "Content-Type": "application/json", "Idempotency-Key": "key-def-456" } },
+      makeEnv(db, queue),
+    );
+    assert.equal(other.status, 202);
+    assert.equal(db.campaigns.length, 2);
+  } finally {
+    provider.restore();
+  }
+});
+
 // =======================================================================================
-// 12.2 — POST /api/campaigns with a manual `recipients` list (roadmap Phase 12)
+// 6.3 — GET /api/campaigns
 // =======================================================================================
 
 test("12.2 manual list: mixed spellings normalize, dedupe, and enqueue as exactly the E.164 numbers", async () => {

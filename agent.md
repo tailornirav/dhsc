@@ -55,14 +55,18 @@ disagree, fix both in the same change.
 > correctness/polish. Phase 11 is the current work; do not report the remaining
 > areas as "done" until they land.
 >
-> **Phase 13 (money-honesty fixes) is planned and NOT started** — a review of Phases 0–12 found a
+> **Phase 13 (money-honesty fixes) is planned and IN PROGRESS** — a review of Phases 0–12 found a
 > **HIGH** gap (create has no idempotency, so a retry/resubmit **double-spends**) plus two honesty
 > gaps (scheduled campaigns are **never settled in the DB**, and a scheduled cancel can falsely
 > report `CANCELLED` after the provider may already have sent). It adds an optional
 > `Idempotency-Key` on `POST /api/campaigns` (+ `idempotency_keys` migration), a Cron `scheduled()`
 > reconcile that settles past-due `SCHEDULED` campaigns (time-based — **not** webhooks; §8.7 stays
 > deferred), and a `409` refusal for a past-due cancel. It also **lands roadmap 11.7** (do not fix
-> 11.7 separately). See `docs/roadmap.md` Phase 13 and `docs/mission.md` §8.11–§8.13.
+> 11.7 separately). **13.1** (the `idempotency_keys` migration) and **13.2** (create idempotency: the
+> route replays a stored result for a repeated `Idempotency-Key`, the SPA mints a UUID per submit
+> attempt, and the service helpers live in `src/services/campaigns.ts`) are **done**; **13.3**
+> (Cron `scheduled()` reconcile) and **13.4** (past-due cancel `409`, which lands 11.7) remain. See
+> `docs/roadmap.md` Phase 13 and `docs/mission.md` §8.11–§8.13.
 >
 > **Phase 12 (manual recipient list — "send to specific numbers") is planned and NOT started.**
 > It adds an **audience source** (all contacts *or* a pasted list) to the *existing* create form
