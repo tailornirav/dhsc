@@ -350,7 +350,11 @@ per `request_id`.
    **deny-by-default** with an explicit public carve-out list (`PUBLIC_API_PATHS`). A local
    dev bypass (`DEV_AUTH_BYPASS === "true"`) is opt-in and defaults off so the live gate is
    never opened by accident. JWT **signature** verification is deliberately **not** done in
-   the Worker (mission.md §8, still-open) because Access is the only ingress.
+   the Worker (mission.md §8, still-open) because Access is the only ingress. The resolved
+   identity is available on the request context (`c.get("identity")`, typed via
+   `ContextVariableMap`) but is **intentionally not persisted** on campaigns — an audit trail
+   ("who created this campaign") is **out of scope** (mission.md §4 success criteria do not
+   require it, and reporting is a §5 non-goal), so no `created_by` column exists (roadmap 11.8).
 2. **Opt-out exception:** the only unauthenticated route — a single-purpose **public page**
    at **`dhsc.uk/x`** (the path named by the SMS suffix `Stop: dhsc.uk/x`) where a customer
    submits their phone number. The page is a **standalone, zero-JS static asset**
@@ -386,7 +390,9 @@ per `request_id`.
 > `opt_outs` before each provider call, so a recipient who opts out during a scheduled window is
 > dropped at send time (11.3, fixed). (11.1, the public opt-out form now returning an HTML
 > confirmation, and 11.2, the same-origin backstop above, are also fixed — 11.4 likewise now
-> applies the balance pre-flight to test sends.) 11.5–11.8 remain
+> applies the balance pre-flight to test sends.) 11.8 is **resolved as "no audit trail"** — the
+> unused `getIdentity` export was removed and identity is intentionally not persisted (see item 1
+> above). 11.5–11.7 remain
 > correctness/polish items — see `roadmap.md`.
 
 ---

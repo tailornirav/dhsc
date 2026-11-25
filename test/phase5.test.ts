@@ -23,7 +23,6 @@ import {
   CF_ACCESS_EMAIL_HEADER,
   CF_ACCESS_JWT_HEADER,
   DEV_IDENTITY,
-  getIdentity,
   isDevBypassEnabled,
   resolveAccessIdentity,
 } from "../src/lib/auth.js";
@@ -150,8 +149,9 @@ test("authenticated unknown /api/* path reaches routing (404, not 401)", async (
 
 test("identity is attached to the context for downstream handlers", async () => {
   // A fresh app: register the probe before first use so the matcher exists with the route.
+  // The probe reads the `identity` context variable that `requireAuth` sets.
   const probe = createApp();
-  probe.get("/api/whoami", (c) => c.json(getIdentity(c)));
+  probe.get("/api/whoami", (c) => c.json(c.get("identity")));
 
   const res = await probe.request(
     "/api/whoami",

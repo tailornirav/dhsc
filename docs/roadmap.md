@@ -660,20 +660,28 @@
   matches reality (the provider may still accept the `DELETE`), and record it in `tech.md`
   Flow B. **Verify:** `npm test` green.
 
-### 11.8 ☐ Record an operator identity on each campaign (audit trail)
+### 11.8 ✅ Audit trail decided: identity is intentionally **not** persisted (dead code removed)
 
-> **Defect/gap.** `src/lib/auth.ts` resolves the Cloudflare Access identity into
-> `c.get('identity')`, but `getIdentity()` is **never used** — no route reads it, so there is no
-> record of *who* sent a campaign despite the identity being available. (Not a bug; a missed
-> capability and dead code.)
+> **Gap.** `src/lib/auth.ts` resolved the Cloudflare Access identity into `c.get('identity')`,
+> but the `getIdentity()` helper was exported and **no route** read it — no record of *who*
+> sent a campaign, despite the identity being available. (Not a bug; a missed capability and
+> dead surface.)
 
-- **11.8.1 ☐** Decide whether an audit trail is in scope (mission.md §4 success criteria). If
-  yes: persist the resolved email on campaign creation (a new nullable `created_by` column via a
-  forwarded migration) and surface it in the detail view. If no: delete the unused `getIdentity`
-  export and note in `tech.md` §9.1 that identity is intentionally not persisted.
-- **11.8.2 ☐** If a column is added, follow the forward-only migration rule (`README.md`
-  Rollback) and update `src/db/schema.ts` + a new migration. **Verify:** `npm test` green;
-  `npx wrangler d1 migrations apply sms-campaigns-db --local` applies cleanly.
+> **Decision (the "no" branch of 11.8.1): an audit trail is out of scope.** The `mission.md`
+> §4 success criteria do not require recording the operator, reporting/analytics is a §5
+> non-goal, and none of the three user roles (§3) need "who sent this". Consistent with §6.5
+> (boring, readable code) the unused export was removed rather than left as speculative
+> surface, and the resolution is recorded in `tech.md` §9 item 1.
+
+- **11.8.1 ✅** Decided **no**: no `created_by` column is added. The unused `getIdentity`
+  export is deleted from `src/lib/auth.ts` (the now-unused `Context` type import is trimmed
+  with it). The `identity` context variable and `ContextVariableMap` typing remain — that is
+  what `requireAuth` sets and what the 401 behaviour depends on. `tech.md` §9 item 1 now states
+  that identity is resolved for the request but **intentionally not persisted**.
+- **11.8.2 ✅** No migration needed (no column added), so the forward-only migration rule is
+  untouched. `test/phase5.test.ts` no longer imports `getIdentity`; its "identity is attached
+  to the context" test now asserts the same guarantee via `c.get("identity")` directly, so
+  coverage is unchanged. **Verified:** `npm test` green; `npm run typecheck` clean.
 
 ### Phase 11 — Verify (automatable)
 

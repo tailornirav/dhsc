@@ -16,7 +16,7 @@
  * Cloudflare-specific crypto. It must stay cheap (hard rule #5: ≤10 ms CPU).
  */
 
-import type { Context, MiddlewareHandler } from "hono";
+import type { MiddlewareHandler } from "hono";
 
 // Make the resolved identity a first-class context variable so `c.get("identity")` is typed
 // everywhere without threading a Variables generic through Hono's overloads.
@@ -122,10 +122,3 @@ export function createRequireAuth<E extends AuthEnv>(): MiddlewareHandler<{ Bind
 
 /** Singleton auth guard; callers may also use `createRequireAuth` for a typed instance. */
 export const requireAuth = createRequireAuth<AuthEnv>();
-
-/** Read the resolved identity off a context (throws only if used before `requireAuth`). */
-export function getIdentity(c: Context): AuthIdentity {
-  const identity = c.get("identity");
-  if (!identity) throw new Error("getIdentity() called before requireAuth middleware ran");
-  return identity;
-}

@@ -47,7 +47,9 @@ disagree, fix both in the same change.
 > real defects. **11.1** (public opt-out form now returns an HTML confirmation), **11.2**
 > (same-origin/CSRF backstop on mutating `/api/*` routes), **11.3** (opt-outs are now
 > re-checked at dispatch time for scheduled sends), and **11.4** (test sends now run the same
-> balance pre-flight as a campaign) are **fixed**; with 11.5–11.8 as remaining
+> balance pre-flight as a campaign) are **fixed**, and **11.8** is **resolved as "no audit
+> trail"** (the unused `getIdentity` export was removed; identity is intentionally not
+> persisted); with 11.5–11.7 as remaining
 > correctness/polish. Phase 11 is the current work; do not report the remaining
 > areas as "done" until they land.
 
