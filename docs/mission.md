@@ -164,10 +164,11 @@ These are now **settled facts**. Treat them as requirements, not preferences.
 
 ### Open pending Phase 11 (see `roadmap.md` Phase 11 — resolve when each step lands)
 
-- **Scheduled-send opt-out re-check (11.3):** the blacklist is documented as *always* stripped
-  from every audience, but it is currently applied only at **create** time. Decision to confirm:
-  re-check `opt_outs` at **dispatch** time for scheduled campaigns so the guarantee holds at
-  send time too (recommended — it is the compliant reading).
+- **Scheduled-send opt-out re-check (11.3): RESOLVED.** The blacklist is documented as *always*
+  stripped from every audience, and it is now applied at **both** create time (the audience is
+  stripped before batches are enqueued) and **dispatch** time — `handleDispatch` loads a fresh
+  `loadOptOutSet` and drops any recipient who opted out during the scheduled window before calling
+  the provider, so the guarantee holds at send time too.
 - **Test-send balance rule (11.4):** hard rule #9 says block a send when the estimate exceeds
   credit, but `POST /api/test-sms` is currently exempt. Decide whether a test send (1 credit)
   stays exempt or gets the same pre-flight as a campaign.

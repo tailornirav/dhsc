@@ -179,7 +179,10 @@ CREATE INDEX idx_batches_campaign ON campaign_batches(campaign_id, status);
 **Opt-outs:** the brief requires an opt-out blacklist that is always stripped from audiences.
 Add an `opt_outs` table (at minimum: `mobile_number` unique + `created_at`) in the migration
 phase. Resolved: opt-out is a **public web page**, so the table is written by an
-unauthenticated route (validated + rate-limited) and read by audience computation.
+unauthenticated route (validated + rate-limited) and read by audience computation. The blacklist
+is applied at **both** create time (the audience is stripped before the batches are enqueued) and
+**dispatch** time (the consumer re-checks `opt_outs` before each provider call, so a recipient
+who opts out during a scheduled window is dropped — roadmap 11.3).
 
 **Test-send flag:** `campaigns.is_test` (added in Phase 2) exists so a single test SMS can be
 **recorded in History and labelled as a test** (mission.md §8.6 / roadmap 6.6); the rest of a
@@ -264,7 +267,11 @@ per `request_id`.
 **`DISPATCH_BATCH`:**
 1. Load the campaign and the batch. The recipients come from the message's `recipients` field
    (opt-out-stripped by the producer); the consumer does **not** re-read the raw `audience_chunks`
-   row, because that row still contains opted-out numbers (tech.md §4 "Opt-outs").
+   row, because that row still contains opted-out numbers (tech.md §4 "Opt-outs"). It **does**
+   re-check the live `opt_outs` blacklist at send time and drop any recipient who opted out after
+   the campaign was created (roadmap 11.3) — so the blacklist guarantee holds for scheduled sends
+   too, not only at create time. If the fresh list is empty, the batch is marked `FAILED` and the
+   campaign settles (terminal, never retried).
 2. **Idempotency/race guard:** if `batch.status !== 'PENDING'` → `ack`, skip. If
    `campaign.status ∈ {'CANCELLING','CANCELLED'}` → mark batch `CANCELLED`, `ack`, skip
    (stops sending if the operator cancelled mid-queue).
@@ -371,11 +378,12 @@ per `request_id`.
    the Access cookie's `SameSite` attribute) — it does **not** replace them, and it is not a CSRF
    token.
 
-> **Known gaps tracked in `roadmap.md` Phase 11** (found in a full review; not yet fixed):
-> the opt-out blacklist is applied at create time only, not re-checked at dispatch for scheduled
-> sends (11.3). Do not treat that item as fully guaranteed until Phase 11 lands. (11.1, the
-> public opt-out form now returning an HTML confirmation, and 11.2, the same-origin backstop
-> above, are fixed.)
+> **Known gaps tracked in `roadmap.md` Phase 11** (found in a full review): the opt-out
+> blacklist is now applied at **both** create and dispatch time — the consumer re-checks
+> `opt_outs` before each provider call, so a recipient who opts out during a scheduled window is
+> dropped at send time (11.3, fixed). (11.1, the public opt-out form now returning an HTML
+> confirmation, and 11.2, the same-origin backstop above, are also fixed.) 11.4–11.8 remain
+> correctness/polish items — see `roadmap.md`.
 
 ---
 

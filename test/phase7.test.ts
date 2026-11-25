@@ -217,6 +217,71 @@ test("7.1 DISPATCH_BATCH schedules with schedule_date and settles the campaign t
   }
 });
 
+test("11.3 a recipient who opts out after a scheduled campaign is created is dropped at dispatch", async () => {
+  const db = new FakeD1();
+  db.seedAudience([["+447700900001", "+447700900002", "+447700900003"]]);
+  seedCampaign(db, {
+    mode: "SCHEDULED",
+    schedule_date: "2027-01-01T10:00:00Z",
+    total_batches: 1,
+    total_recipients: 3,
+  });
+  seedBatch(db, { id: "b1" });
+  // Opted out during the window between create and send: must not reach the provider.
+  db.optOuts.push({ mobile_number: "+447700900002", created_at: "2026-06-01T00:00:00Z" });
+
+  const provider = stubProvider();
+  provider.requestId = "req-sched";
+
+  try {
+    const msg = message({ type: "DISPATCH_BATCH", campaignId: "camp-1", batchId: "b1", chunkIndex: 0 });
+    await runQueue([msg], makeEnv(db));
+
+    assert.equal(msg.acked, true);
+    assert.equal(msg.retriedWith, null);
+
+    // The provider call carries only the two still-valid numbers.
+    const sched = provider.calls.find((c) => c.url.includes("/schedule/bulk"));
+    assert.ok(sched, "expected a POST /schedule/bulk call");
+    const body = provider.bodies[provider.calls.indexOf(sched)] as { mobile_numbers: string[] };
+    assert.deepEqual(body.mobile_numbers, ["+447700900001", "+447700900003"]);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("11.3 a batch whose whole list opted out since creation is failed terminally, not sent", async () => {
+  const db = new FakeD1();
+  db.seedAudience([["+447700900001", "+447700900002"]]);
+  seedCampaign(db, {
+    mode: "SCHEDULED",
+    schedule_date: "2027-01-01T10:00:00Z",
+    total_batches: 1,
+    total_recipients: 2,
+  });
+  seedBatch(db, { id: "b1" });
+  db.optOuts.push(
+    { mobile_number: "+447700900001", created_at: "2026-06-01T00:00:00Z" },
+    { mobile_number: "+447700900002", created_at: "2026-06-01T00:00:00Z" },
+  );
+
+  const provider = stubProvider();
+
+  try {
+    const msg = message({ type: "DISPATCH_BATCH", campaignId: "camp-1", batchId: "b1", chunkIndex: 0 });
+    await runQueue([msg], makeEnv(db));
+
+    assert.equal(msg.acked, true);
+    assert.equal(msg.retriedWith, null);
+    // No provider call at all: the batch is terminal, not retried.
+    assert.equal(provider.calls.length, 0);
+    assert.equal(db.batches[0]?.status, "FAILED");
+    assert.equal(db.campaigns[0]?.status, "PARTIAL_FAILURE");
+  } finally {
+    provider.restore();
+  }
+});
+
 test("7.5 a campaign only settles once every batch is done (PENDING keeps it in flight)", async () => {
   const db = new FakeD1();
   db.seedAudience([["+447700900001"], ["+447700900002"]]);

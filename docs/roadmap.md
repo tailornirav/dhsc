@@ -574,7 +574,7 @@
   on mutations and that it complements (does not replace) Cloudflare Access; the decision is
   recorded in `mission.md` §8 (item 9).
 
-### 11.3 ☐ Re-check opt-outs at dispatch time (scheduled sends)
+### 11.3 ✅ Re-check opt-outs at dispatch time (scheduled sends)
 
 > **Defect.** `loadAudienceChunks` strips opt-outs at **create** time and freezes the stripped
 > list into the queue message. For a **scheduled** campaign, a customer who opts out during the
@@ -583,20 +583,20 @@
 > (tech.md §4 "Opt-outs"; mission.md §4 item 8, "always stripped from audiences") for the
 > scheduled case — a compliance issue.
 
-- **11.3.1 ☐** In `handleDispatch` (`src/queue/dispatch.ts`), after resolving `recipients` and
-  before the provider call, load a fresh opt-out set (`loadOptOutSet`) and drop any recipient
-  that opted out after the campaign was created. One small query per batch; still far inside D1's
+- **11.3.1 ✅** In `handleDispatch` (`src/queue/dispatch.ts`), after resolving `recipients` and
+  before the provider call, a fresh `loadOptOutSet` is loaded and every recipient that opted out
+  after the campaign was created is dropped. One small query per batch; still far inside D1's
   per-invocation budget.
-- **11.3.2 ☐** If the fresh list becomes empty, reuse the existing `markFailed` + settle path
-  (the batch is terminal, not retried). Do **not** re-read the raw `audience_chunks` row — the
-  blacklist is the only live input.
-- **11.3.3 ☐** Add a regression test in `test/phase7.test.ts` (or `phase9.test.ts`): create a
-  scheduled campaign, opt a recipient out **after** creation, run the dispatch consumer, and
-  assert the opted-out number is **not** in the provider call and the count is right before the
-  send.
-- **11.3.4 ☐** Update `tech.md` Flow C step 1 and §4 "Opt-outs" to state the blacklist is
-  applied at **both** create and dispatch time. **Verify:** `npm test` green; the provider stub
-  shows the filtered recipient list.
+- **11.3.2 ✅** An empty list (no recipients, or all opted out since creation) reuses the existing
+  `markFailed` + settle path (the batch is terminal, not retried). The raw `audience_chunks` row is
+  deliberately never re-read — the blacklist is the only live input.
+- **11.3.3 ✅** Regression tests added in `test/phase7.test.ts`: a scheduled campaign is created,
+  a recipient opts out **after** creation, the dispatch consumer runs, and the opted-out number is
+  **not** in the provider call (and a whole-list opt-out fails the batch terminally with no call).
+- **11.3.4 ✅** `tech.md` Flow C step 1 and §4 "Opt-outs" now state the blacklist is applied at
+  **both** create and dispatch time. **Verified:** `npm test` (132 total) all green;
+  `npm run typecheck` clean; the provider stub shows the filtered recipient list.
+- **Decision recorded:** `mission.md` §8 now marks the scheduled-send opt-out re-check **resolved**.
 
 ### 11.4 ☐ Test-send balance handling (decide, then align code + docs)
 

@@ -10,7 +10,9 @@
  * Flow (tech.md Flow C, `DISPATCH_BATCH`):
  *   1. Load the campaign and the batch. The recipients come from the message (`recipients`,
  *      already opt-out-stripped by the producer) — the consumer never re-reads the raw
- *      `audience_chunks` row, because that row still contains opted-out numbers.
+ *      `audience_chunks` row, because that row still contains opted-out numbers. It **does**
+ *      re-check the live `opt_outs` blacklist so a recipient who opted out after the campaign
+ *      was created is dropped at send time (roadmap 11.3).
  *   2. Idempotency/race guard: a non-`PENDING` batch is acked and skipped. A campaign being
  *      cancelled (`CANCELLING`/`CANCELLED`) retires the batch as `CANCELLED` and skips the send.
  *   3. Call the provider once (`POST /3.0/send/bulk` or `/3.0/schedule/bulk`).
@@ -22,6 +24,7 @@
  */
 
 import { firstRow } from "../db/client.js";
+import { loadOptOutSet } from "../services/audience.js";
 import {
   sendBulk,
   scheduleBulk,
@@ -124,10 +127,19 @@ export async function handleDispatch(
   }
 
   // 3. Resolve recipients: inline (test send) or from the pre-chunked audience row.
-  const recipients = await resolveRecipients(deps.db, message);
+  const resolved = await resolveRecipients(deps.db, message);
+
+  // 3b. Re-check opt-outs at dispatch time (roadmap 11.3). The producer strips opt-outs at
+  //     create time, but for a *scheduled* campaign a recipient may have opted out during the
+  //     window before the send. The blacklist is the only live input, so filter the resolved
+  //     list against a fresh opt-out set (one small query per batch; the raw `audience_chunks`
+  //     row is deliberately never re-read here).
+  const optOuts = await loadOptOutSet(deps.db);
+  const recipients = resolved.filter((n) => !optOuts.has(n));
+
   if (recipients.length === 0) {
-    // Nothing to send: treat as a terminal failure for this batch so the campaign can settle
-    // rather than hang on a permanently-empty chunk.
+    // Nothing to send (no recipients, or all opted out since creation): treat as a terminal
+    // failure for this batch so the campaign can settle rather than hang on an empty chunk.
     await markFailed(deps.db, batch.id, "no valid recipients for this batch", now());
     await recomputeCampaign(deps.db, campaign.id, now());
     return { action: "ack", reason: "empty recipient list" };
