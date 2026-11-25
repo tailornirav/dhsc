@@ -83,10 +83,10 @@ Before the first production send, confirm the Cloudflare Access rules leave **on
 
 | Path | What |
 | :--- | :--- |
-| `src/index.ts` | Worker entry: Hono app + the queue consumer. |
+| `src/index.ts` | Worker entry: Hono app + the queue consumer + the Cron `scheduled()` reconcile. |
 | `src/routes/` | HTTP routes (balance, campaigns, test-sms, opt-outs, public `/x` page). |
 | `src/services/` | Domain logic (audience, opt-outs, Sendmode client, segment maths). |
-| `src/queue/` | Queue message types + dispatch/cancel handlers. |
+| `src/queue/` | Queue message types + dispatch/cancel handlers + the Cron reconcile. |
 | `src/lib/` | Auth, hardening, validation, UK-time helpers. |
 | `src/db/` | Drizzle schema + migrations. |
 | `web/` | React + Vite SPA (builds to `web/dist`). `web/public/x.html` is the static opt-out page. |

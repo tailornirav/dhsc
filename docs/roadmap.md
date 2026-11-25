@@ -813,7 +813,7 @@
 
 ---
 
-## Phase 13 — Money-honesty fixes (create idempotency + scheduled reconcile) ☐ TODO
+## Phase 13 — Money-honesty fixes (create idempotency + scheduled reconcile) ✅ DONE
 
 > **Why this phase exists:** a review of Phases 0–12 found two ways the system can lie about money
 > or spend it twice. (1) **`POST /api/campaigns` has no idempotency** — a retry, a double-click, or
@@ -888,54 +888,55 @@
   asserts **one** `campaigns` row, **one** enqueue, and an identical `202` body on both calls;
   `npm run typecheck` + `npm run typecheck:web` clean. **No live provider call.**
 
-### 13.3 ☐ Scheduled reconcile: Cron `scheduled()` handler
+### 13.3 ✅ Scheduled reconcile: Cron `scheduled()` handler
 
 > **Nano-step, the honesty fix.** Settle past-due `SCHEDULED` campaigns **by time**, not by polling
 > (the provider has no status endpoint) and **not** by webhooks (§8.7 stays deferred).
 
-- **13.3.1 ☐** Add `"triggers": { "crons": ["*/15 * * * *"] }` to `wrangler.jsonc` and export a
+- **13.3.1 ✅** Add `"triggers": { "crons": ["*/15 * * * *"] }` to `wrangler.jsonc` and export a
   `scheduled()` handler from `src/index.ts` (alongside `fetch`/`queue`). The handler calls a new
   service function and needs **no** message plumbing.
-- **13.3.2 ☐** Add the reconcile service (e.g. `reconcileScheduledCampaigns` in
-  `src/services/campaigns.ts`, or a small `src/queue/reconcile.ts` if that reads cleaner):
-  `SELECT id FROM campaigns WHERE status = 'SCHEDULED' AND schedule_date < ?` (now, ISO UTC), then
-  for each call the existing `recomputeCampaign`/`tallyBatches` path so the aggregate is derived
-  from batch rows exactly as Flow C does — all batches `SCHEDULED`/`SENT` → `SENT`, any `FAILED` →
+- **13.3.2 ✅** Add the reconcile service (`reconcileScheduledCampaigns` in
+  `src/queue/reconcile.ts`): `SELECT id FROM campaigns WHERE status = 'SCHEDULED' AND schedule_date < ?`
+  (now, ISO UTC), then for each call the existing `recomputeCampaign`/`tallyBatches` path (with
+  `settleElapsed` so an all-`SCHEDULED` set settles to `SENT`) so the aggregate is derived from batch
+  rows exactly as Flow C does — all batches `SCHEDULED`/`SENT` → `SENT`, any `FAILED` →
   `PARTIAL_FAILURE`. Idempotent: the `status = 'SCHEDULED'` predicate drops settled rows, so an
   overlapping run is a no-op, and a cancelled campaign never enters the set.
-- **13.3.3 ☐** Make the clock injectable (same `now?: () => string` pattern as the queue handlers)
+- **13.3.3 ✅** Make the clock injectable (same `now?: () => string` pattern as the queue handlers)
   so the reconcile is deterministically testable. **No provider call anywhere in this path.**
-- **13.3.4 ☐** Document Flow D in `tech.md` §6 and the Cron binding in §3 (done above); note the
+- **13.3.4 ✅** Document Flow D in `tech.md` §6 and the Cron binding in §3 (done above); note the
   `SCHEDULED → SENT` transition in the §4 status machine. Record the decision in `mission.md` §8.12.
 - **Verify:** `npm test` green; a new test creates a `SCHEDULED` campaign with a **past**
   `schedule_date`, runs the reconcile with an injected clock, and asserts the campaign flips to
   `SENT` (and a mixed-batch variant flips to `PARTIAL_FAILURE`); a second run writes nothing new.
   `npm run typecheck` clean. **No live provider call.**
 
-### 13.4 ☐ Refuse a past-due scheduled cancel (`409`)
+### 13.4 ✅ Refuse a past-due scheduled cancel (`409`)
 
 > **Nano-step, the "don't lie about it" fix.** Also lands roadmap **11.7** (do not fix 11.7
 > separately).
 
-- **13.4.1 ☐** In `beginCancellation` (`src/services/campaigns.ts`), add the documented
+- **13.4.1 ✅** In `beginCancellation` (`src/services/campaigns.ts`), add the documented
   pre-condition: when the campaign is `SCHEDULED` and its `schedule_date` is **in the past**,
   return `{ ok: false, status: 409, message: … }` **before** flipping status — the provider may
   already have sent it, so a local `CANCELLED` would be a lie. A still-future scheduled campaign
   and a `QUEUED` immediate campaign cancel exactly as today.
-- **13.4.2 ☐** The route (`src/routes/campaigns.ts` cancel handler) already returns
+- **13.4.2 ✅** The route (`src/routes/campaigns.ts` cancel handler) already returns
   `{ error: 'conflict', message }` at the returned status, so no shape change is needed — confirm
   the `409` reaches the client with a clear message (e.g. "This campaign's scheduled time has
   passed; it cannot be cancelled."). Surface that message in the SPA's cancel error path.
-- **13.4.3 ☐** Fix `tallyBatches` (`src/queue/campaign-status.ts`) precedence so a campaign with
+- **13.4.3 ✅** Fix `tallyBatches` (`src/queue/campaign-status.ts`) precedence so a campaign with
   **any** `SENT`/`SCHEDULED` (completed) batch **and** any `CANCELLED` batch settles to
   **`PARTIAL_FAILURE`**, not `CANCELLED` — `CANCELLED` must only ever mean nothing was sent. Update
   the doc-comment's terminal-rules list to match.
-- **13.4.4 ☐** Document the `409` in `tech.md` §5 + Flow B step 1 (done above) and record the
+- **13.4.4 ✅** Document the `409` in `tech.md` §5 + Flow B step 1 (done above) and record the
   decision in `mission.md` §8.13; mark roadmap 11.7 as superseded (done above).
-- **Verify:** `npm test` green; new `test/phase6.test.ts` cases: cancel a scheduled campaign with a
-  **past** `schedule_date` → `409` and status **unchanged** (not `CANCELLED`); cancel a **future**
-  one → still `202`; a `tallyBatches` unit case in `test/phase7.test.ts` (`SENT` + `CANCELLED` →
-  `PARTIAL_FAILURE`). `npm run typecheck` clean. **No live provider call.**
+
+**Verify:** `npm test` green; new `test/phase6.test.ts` cases: cancel a scheduled campaign with a
+**past** `schedule_date` → `409` and status **unchanged** (not `CANCELLED`); cancel a **future**
+one → still `202`; a `tallyBatches` unit case in `test/phase7.test.ts` (`SENT` + `CANCELLED` →
+`PARTIAL_FAILURE`). `npm run typecheck` clean. **No live provider call.**
 
 ### Phase 13 — Verify (automatable)
 

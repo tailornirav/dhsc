@@ -63,10 +63,15 @@ disagree, fix both in the same change.
 > reconcile that settles past-due `SCHEDULED` campaigns (time-based — **not** webhooks; §8.7 stays
 > deferred), and a `409` refusal for a past-due cancel. It also **lands roadmap 11.7** (do not fix
 > 11.7 separately). **13.1** (the `idempotency_keys` migration) and **13.2** (create idempotency: the
+> `idempotency_keys` migration), **13.2** (create idempotency: the
 > route replays a stored result for a repeated `Idempotency-Key`, the SPA mints a UUID per submit
-> attempt, and the service helpers live in `src/services/campaigns.ts`) are **done**; **13.3**
-> (Cron `scheduled()` reconcile) and **13.4** (past-due cancel `409`, which lands 11.7) remain. See
-> `docs/roadmap.md` Phase 13 and `docs/mission.md` §8.11–§8.13.
+> attempt, and the service helpers live in `src/services/campaigns.ts`) are **done**, and **13.3**
+> (Cron `scheduled()` reconcile: `triggers.crons` in `wrangler.jsonc`, the `scheduled()` handler in
+> `src/index.ts`, and `reconcileScheduledCampaigns` in `src/queue/reconcile.ts`) is **done**, and
+> **13.4** (past-due cancel `409`, which lands 11.7 — a scheduled campaign past its
+> `schedule_date` is refused with `409` instead of writing a false `CANCELLED`, and `tallyBatches`
+> now settles a `SENT`+`CANCELLED` mix to `PARTIAL_FAILURE`) is **done** — Phase 13 is complete.
+> See `docs/roadmap.md` Phase 13 and `docs/mission.md` §8.11–§8.13.
 >
 > **Phase 12 (manual recipient list — "send to specific numbers") is planned and NOT started.**
 > It adds an **audience source** (all contacts *or* a pasted list) to the *existing* create form

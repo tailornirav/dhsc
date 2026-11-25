@@ -292,7 +292,11 @@ export type CancelStart =
  *
  * Only a campaign that is `QUEUED` (immediate, still untouched) or `SCHEDULED` (future) can
  * be cancelled. Steps:
- *   1. Guard the current status; reject anything already terminal or already cancelling.
+ *   1. Guard the current status; reject anything already terminal or already cancelling. Also
+ *      refuse a `SCHEDULED` campaign whose `schedule_date` is **already in the past**: the
+ *      provider may have sent it, so a local `CANCELLED` would be a lie (roadmap 13.4.1,
+ *      mission.md §8.13). `schedule_date` is an ISO 8601 UTC string, so a lexicographic
+ *      comparison against `now` is the correct chronological order (same as Flow D).
  *   2. Set `campaigns.status = 'CANCELLING'`.
  *   3. Mark every still-`PENDING` batch `CANCELLED` — it never reached the provider, so no
  *      provider call is needed for it.
@@ -313,6 +317,22 @@ export async function beginCancellation(
       ok: false,
       status: 409,
       message: `Campaign cannot be cancelled from status ${campaign.status}.`,
+    };
+  }
+
+  // Flow B step 1 (roadmap 13.4.1): a scheduled campaign whose window has already passed cannot
+  // be honestly cancelled — the provider may already have sent it, and a refused
+  // `DELETE /3.0/schedule` does not mean the send did not happen. Refuse with `409` *before*
+  // flipping any status; the Flow D reconcile settles the row to `SENT`/`PARTIAL_FAILURE` instead.
+  if (
+    campaign.status === "SCHEDULED" &&
+    campaign.schedule_date !== null &&
+    campaign.schedule_date < now
+  ) {
+    return {
+      ok: false,
+      status: 409,
+      message: "This campaign's scheduled time has passed; it cannot be cancelled.",
     };
   }
 

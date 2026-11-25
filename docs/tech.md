@@ -482,11 +482,11 @@ receipt.
 > confirmation, and 11.2, the same-origin backstop above, are also fixed — 11.4 likewise now
 > applies the balance pre-flight to test sends.) 11.8 is **resolved as "no audit trail"** — the
 > unused `getIdentity` export was removed and identity is intentionally not persisted (see item 1
-> above). 11.5–11.7 remain
+> above). 11.5–11.6 remain
 > correctness/polish items — see `roadmap.md`.
 >
-> **Phase 11.7 is superseded by Phase 13.** 11.7 (align `beginCancellation` with its
-> `schedule_date`-future pre-condition) is landed by the Phase 13 past-due cancel refusal: a
+> **Phase 11.7 is superseded by Phase 13 (and is now landed).** 11.7 (align `beginCancellation`
+> with its `schedule_date`-future pre-condition) is landed by the Phase 13 past-due cancel refusal: a
 > scheduled campaign past its `schedule_date` is refused `409` rather than cancelled, so the
 > documented pre-condition and the code agree. **Phase 13** also closes two money-honesty gaps a
 > review of Phases 0–12 found: **create idempotency** (a retried/resubmitted `POST /api/campaigns`

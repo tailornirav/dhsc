@@ -22,6 +22,8 @@ import assert from "node:assert/strict";
 
 import worker, { type Env } from "../src/index.js";
 import type { QueueMessage } from "../src/queue/messages.js";
+import { tallyBatches } from "../src/queue/campaign-status.js";
+import { reconcileScheduledCampaigns } from "../src/queue/reconcile.js";
 import { FakeD1, FakeQueue, stubProvider } from "./helpers/fakes.js";
 
 // ---------------------------------------------------------------------------------------
@@ -667,4 +669,80 @@ test("7.3 a mixed batch processes every message (dispatch + cancel) in one invoc
   } finally {
     provider.restore();
   }
+});
+
+// =======================================================================================
+// 13.3 — Cron reconcile: settle past-due SCHEDULED campaigns by time
+// =======================================================================================
+
+test("13.3 the Cron scheduled() handler settles a past-due SCHEDULED campaign to SENT", async () => {
+  const db = new FakeD1();
+  seedCampaign(db, { status: "SCHEDULED", mode: "SCHEDULED", schedule_date: "2020-01-01T10:00:00Z", total_batches: 2, total_recipients: 2 });
+  // Every batch reached the provider (each carries a request_id) but the campaign is still parked
+  // at SCHEDULED — exactly the state the reconcile exists to fix.
+  seedBatch(db, { id: "b1", chunk_index: 0, status: "SCHEDULED", sendmode_request_id: "req-1" });
+  seedBatch(db, { id: "b2", chunk_index: 1, status: "SCHEDULED", sendmode_request_id: "req-2" });
+
+  const provider = stubProvider();
+  try {
+    // Drive the real Cron entrypoint (no provider call must happen here).
+    await worker.scheduled({} as ScheduledController, makeEnv(db));
+
+    assert.equal(db.campaigns[0]?.status, "SENT");
+    assert.equal(provider.calls.length, 0);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("13.3 reconcile with an injected clock settles only past-due campaigns; a mixed batch becomes PARTIAL_FAILURE", async () => {
+  const db = new FakeD1();
+  // Past-due campaign with one sent batch and one failed batch → PARTIAL_FAILURE.
+  seedCampaign(db, { id: "camp-due", status: "SCHEDULED", mode: "SCHEDULED", schedule_date: "2020-01-01T10:00:00Z", total_batches: 2, total_recipients: 2 });
+  seedBatch(db, { id: "d1", campaign_id: "camp-due", chunk_index: 0, status: "SCHEDULED", sendmode_request_id: "req-1" });
+  seedBatch(db, { id: "d2", campaign_id: "camp-due", chunk_index: 1, status: "FAILED" });
+  // A still-future campaign must be left untouched.
+  seedCampaign(db, { id: "camp-future", status: "SCHEDULED", mode: "SCHEDULED", schedule_date: "2027-01-01T10:00:00Z", total_batches: 1, total_recipients: 1 });
+  seedBatch(db, { id: "f1", campaign_id: "camp-future", chunk_index: 0, status: "SCHEDULED", sendmode_request_id: "req-3" });
+
+  const fixedNow = () => "2026-06-01T00:00:00Z";
+  const first = await reconcileScheduledCampaigns({ db: db as unknown as D1Database, now: fixedNow });
+  assert.equal(first.examined, 1);
+  assert.equal(db.campaigns.find((c) => c.id === "camp-due")?.status, "PARTIAL_FAILURE");
+  assert.equal(db.campaigns.find((c) => c.id === "camp-future")?.status, "SCHEDULED");
+
+  // Idempotent: the settled row is no longer SCHEDULED, so a second run writes nothing new.
+  const second = await reconcileScheduledCampaigns({ db: db as unknown as D1Database, now: fixedNow });
+  assert.equal(second.examined, 0);
+});
+
+// =======================================================================================
+// 13.4 — tallyBatches precedence: CANCELLED never masks a real send
+// =======================================================================================
+
+test("13.4 tallyBatches settles a SENT + CANCELLED mix to PARTIAL_FAILURE, not CANCELLED", () => {
+  // One batch reached the provider and one was cancelled: part of the send went out, so the only
+  // honest label is PARTIAL_FAILURE — CANCELLED must only ever mean *nothing* was sent.
+  const mixed = tallyBatches([
+    { status: "SENT", invalid_count: 0 },
+    { status: "CANCELLED", invalid_count: 0 },
+  ]);
+  assert.equal(mixed.status, "PARTIAL_FAILURE");
+  assert.equal(mixed.completed, 1);
+  assert.equal(mixed.cancelled, 1);
+
+  // A live SCHEDULED batch beside a CANCELLED one is NOT settled by Flow C: the provider job may
+  // still fire, so `tallyBatches` leaves it in flight (`null`) until the CANCEL_BATCH retires it.
+  const scheduledMix = tallyBatches([
+    { status: "SCHEDULED", invalid_count: 0 },
+    { status: "CANCELLED", invalid_count: 0 },
+  ]);
+  assert.equal(scheduledMix.status, null);
+
+  // An all-cancelled set still means nothing was sent, so it stays CANCELLED.
+  const allCancelled = tallyBatches([
+    { status: "CANCELLED", invalid_count: 0 },
+    { status: "CANCELLED", invalid_count: 0 },
+  ]);
+  assert.equal(allCancelled.status, "CANCELLED");
 });

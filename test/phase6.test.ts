@@ -728,6 +728,70 @@ test("6.5 cancelling a QUEUED campaign with no provider jobs marks it CANCELLED 
   }
 });
 
+// Roadmap 13.4.1/13.4.2: a SCHEDULED campaign whose `schedule_date` has already passed is refused
+// with 409 and left untouched — the provider may already have sent it, so a local CANCELLED would
+// be a lie. A still-future scheduled campaign cancels exactly as before.
+test("13.4 a past-due scheduled cancel is refused (409) and the status is left unchanged", async () => {
+  const db = seededDb();
+  db.campaigns.push({
+    id: "c1", name: "Overdue", sender_id: "DHSC", message: "m", mode: "SCHEDULED",
+    schedule_date: "2020-01-01T10:00:00Z", status: "SCHEDULED", total_recipients: 5,
+    total_batches: 1, completed_batches: 1, failed_batches: 0, invalid_count: 0,
+    estimated_credits: 5, is_test: 0, created_at: "2020-01-01T00:00:00Z",
+    updated_at: "2020-01-01T00:00:00Z",
+  });
+  db.batches.push({
+    id: "b1", campaign_id: "c1", chunk_index: 0, status: "SCHEDULED",
+    sendmode_request_id: "req-1", invalid_numbers_json: null, error_message: null,
+    updated_at: "2020-01-01T00:00:00Z",
+  });
+  const queue = new FakeQueue();
+  const provider = stubProvider();
+  try {
+    const app = createApp();
+    const res = await app.request("/api/campaigns/c1/cancel", json(), makeEnv(db, queue));
+    assert.equal(res.status, 409);
+    const body = (await res.json()) as { error: string; message: string };
+    assert.equal(body.error, "conflict");
+    assert.match(body.message, /scheduled time has passed/);
+
+    // Nothing was flipped or enqueued: still SCHEDULED, no CANCEL_BATCH, no false CANCELLED.
+    assert.equal(db.campaigns[0]?.status, "SCHEDULED");
+    assert.equal(db.batches[0]?.status, "SCHEDULED");
+    assert.equal(queue.messages.length, 0);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("13.4 a still-future scheduled cancel is still accepted (202)", async () => {
+  const db = seededDb();
+  db.campaigns.push({
+    id: "c1", name: "Future", sender_id: "DHSC", message: "m", mode: "SCHEDULED",
+    schedule_date: "2027-01-01T10:00:00Z", status: "SCHEDULED", total_recipients: 5,
+    total_batches: 1, completed_batches: 1, failed_batches: 0, invalid_count: 0,
+    estimated_credits: 5, is_test: 0, created_at: "2026-01-01T00:00:00Z",
+    updated_at: "2026-01-01T00:00:00Z",
+  });
+  db.batches.push({
+    id: "b1", campaign_id: "c1", chunk_index: 0, status: "SCHEDULED",
+    sendmode_request_id: "req-1", invalid_numbers_json: null, error_message: null,
+    updated_at: "2026-01-01T00:00:00Z",
+  });
+  const queue = new FakeQueue();
+  const provider = stubProvider();
+  try {
+    const app = createApp();
+    const res = await app.request("/api/campaigns/c1/cancel", json(), makeEnv(db, queue));
+    assert.equal(res.status, 202);
+    assert.equal(db.campaigns[0]?.status, "CANCELLING");
+    assert.equal(queue.messages.length, 1);
+    assert.equal(queue.messages[0]?.type, "CANCEL_BATCH");
+  } finally {
+    provider.restore();
+  }
+});
+
 // =======================================================================================
 // 6.6 — POST /api/test-sms
 // =======================================================================================

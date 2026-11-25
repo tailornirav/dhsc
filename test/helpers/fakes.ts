@@ -212,6 +212,14 @@ export class FakeD1 {
         .filter((b) => b.campaign_id === params[0])
         .map((b) => ({ status: b.status, invalid_numbers_json: b.invalid_numbers_json }));
     }
+    // Phase 13.3 (Cron reconcile): past-due SCHEDULED campaigns. ISO 8601 UTC strings compare
+    // chronologically by lexicographic `<`, matching the SQL the reconcile issues.
+    if (q.startsWith("SELECT id FROM campaigns WHERE status = 'SCHEDULED' AND schedule_date < ?")) {
+      const now = params[0] as string;
+      return this.campaigns
+        .filter((c) => c.status === "SCHEDULED" && c.schedule_date !== null && c.schedule_date < now)
+        .map((c) => ({ id: c.id }));
+    }
     if (q.startsWith("SELECT mobile_numbers_json FROM audience_chunks WHERE chunk_index = ?")) {
       return this.audienceChunks
         .filter((c) => c.chunk_index === params[0])

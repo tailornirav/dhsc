@@ -54,12 +54,22 @@ export interface CampaignTally {
  *     not be summarised as `SENT`, and a `CANCELLING` campaign whose `DELETE` has not landed yet
  *     must not report `CANCELLED` while the job can still fire (tech.md Flow C `CANCEL_BATCH`
  *     step 4: cancel settles only when **zero** `SCHEDULED`/`PENDING` remain).
- *   - Otherwise, if **any** batch was `CANCELLED` ⇒ `CANCELLED` (cancellation is sticky once no
- *     provider job remains).
+ *   - Otherwise, if **any** batch was `CANCELLED` **and any** batch completed (`SENT`/`SCHEDULED`)
+ *     ⇒ `PARTIAL_FAILURE`: some of the send went out, so the campaign is only partially
+ *     cancelled — `CANCELLED` must only ever mean *nothing* was sent (tech.md Flow C
+ *     `CANCEL_BATCH` step 4, roadmap 13.4.3).
+ *   - Otherwise, if **any** batch was `CANCELLED` (nothing completed) ⇒ `CANCELLED`.
  *   - Else, if any batch `FAILED` ⇒ `PARTIAL_FAILURE`.
  *   - Else (all `SENT`) ⇒ `SENT`.
+ *
+ * `options.settleElapsed` (tech.md Flow D, roadmap 13.3) flips the still-`SCHEDULED` rule for the
+ * **time-based reconcile only**: when every batch has settled and some are still `SCHEDULED`, the
+ * campaign's scheduled window has elapsed, so those batches count as **`SENT`** ("accepted by the
+ * provider and the window has passed") rather than keeping the campaign parked at `SCHEDULED`
+ * forever. A `CANCELLED` sibling still yields `null` here so a reconcile can never settle a
+ * `CANCELLING` campaign whose provider jobs have not all been deleted. Flow C never sets this.
  */
-export function tallyBatches(rows: BatchTally[]): CampaignTally {
+export function tallyBatches(rows: BatchTally[], options: { settleElapsed?: boolean } = {}): CampaignTally {
   let completed = 0;
   let failed = 0;
   let cancelled = 0;
@@ -104,9 +114,21 @@ export function tallyBatches(rows: BatchTally[]): CampaignTally {
     // (all-`SENT`) campaign never reaches here. For a scheduled campaign we settle to
     // `SCHEDULED`; for a cancelling one, a still-live job keeps it in flight until the
     // `CANCEL_BATCH` retires it (tech.md Flow C `CANCEL_BATCH` step 4).
-    status = cancelled > 0 ? null : "SCHEDULED";
+    if (cancelled > 0) {
+      // A live job beside a cancelled sibling: never settle (the DELETE may still be coming).
+      status = null;
+    } else if (options.settleElapsed) {
+      // Flow D (roadmap 13.3): the scheduled window has elapsed, so an accepted `SCHEDULED` batch
+      // is a `SENT` one — derive the outcome by time, not by polling the provider.
+      status = failed > 0 ? "PARTIAL_FAILURE" : "SENT";
+    } else {
+      status = "SCHEDULED";
+    }
   } else if (cancelled > 0) {
-    status = "CANCELLED";
+    // Cancellation with a mixed outcome (roadmap 13.4.3): if any sibling batch actually reached
+    // the provider (`completed` counts both `SENT` and `SCHEDULED`), part of the send went out, so
+    // this is `PARTIAL_FAILURE` — `CANCELLED` must only ever mean *nothing* was sent.
+    status = completed > 0 ? "PARTIAL_FAILURE" : "CANCELLED";
   } else if (failed > 0) {
     status = "PARTIAL_FAILURE";
   } else {
@@ -123,11 +145,16 @@ export function tallyBatches(rows: BatchTally[]): CampaignTally {
  * (so a mid-flight `QUEUED`/`PROCESSING`/`CANCELLING` campaign is not clobbered prematurely).
  *
  * `now` is injectable for deterministic tests.
+ *
+ * `options.settleElapsed` is threaded to `tallyBatches` for the Flow D reconcile (roadmap 13.3):
+ * it lets an all-`SCHEDULED` campaign settle to `SENT` once its window has elapsed. Flow C leaves
+ * it unset, preserving today's behaviour exactly.
  */
 export async function recomputeCampaign(
   db: D1Database,
   campaignId: string,
   now: string,
+  options: { settleElapsed?: boolean } = {},
 ): Promise<CampaignTally> {
   const rows = await allRows<{ status: string; invalid_numbers_json: string | null }>(
     db,
@@ -140,6 +167,7 @@ export async function recomputeCampaign(
       status: row.status,
       invalid_count: countInvalid(row.invalid_numbers_json),
     })),
+    options,
   );
 
   if (tally.status === null) {

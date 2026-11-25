@@ -19,6 +19,7 @@ import { registerOptOutPageRoutes } from "./routes/opt-out-page.js";
 import type { QueueMessage } from "./queue/messages.js";
 import { handleDispatch } from "./queue/dispatch.js";
 import { handleCancel } from "./queue/cancel.js";
+import { reconcileScheduledCampaigns } from "./queue/reconcile.js";
 
 // Re-exported for back-compat: the Phase 5 tests import `type Env` from here.
 export type { Env, AppEnv } from "./env.js";
@@ -120,6 +121,17 @@ function delay(ms: number): Promise<void> {
  */
 export default {
   fetch: app.fetch,
+  /**
+   * Cron Trigger entrypoint (tech.md Flow D, roadmap 13.3): settle past-due `SCHEDULED`
+   * campaigns. Runs every 15 minutes (`wrangler.jsonc` `triggers.crons`) so a scheduled send is
+   * recorded even when no operator opens the dashboard. It makes **no** provider call — the
+   * reconcile is time-based because Sendmode exposes no status endpoint (mission.md §8.7/§8.12).
+   *
+   * `event`/`ctx` are unused: the reconcile reads and writes D1 only, with no message plumbing.
+   */
+  async scheduled(_event: ScheduledController, env: Env): Promise<void> {
+    await reconcileScheduledCampaigns({ db: env.DB });
+  },
   async queue(batch: MessageBatch<QueueMessage>, env: Env): Promise<void> {
     const sendmode = { accessKey: env.SENDMODE_ACCESS_KEY };
 

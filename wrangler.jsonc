@@ -31,5 +31,8 @@
 				"dead_letter_queue": "sms-campaign-dlq"
 			}
 		]
+	},
+	"triggers": {
+		"crons": ["*/15 * * * *"]
 	}
 }

@@ -224,9 +224,16 @@ These are now **settled facts**. Treat them as requirements, not preferences.
   resubmit, or network replay **cannot double-spend**. Keys are persisted in the `idempotency_keys`
   table (forward-only migration 0001); a create with **no** key keeps the prior behaviour. See
   resolved decision §8.11.
-- **Scheduled-send outcome / reconcile (13.3): PENDING.** Scheduled campaigns never leave
-  `SCHEDULED` in the DB. Phase 13 adds a Cron `scheduled()` reconcile (resolved decision §8.12) —
-  time-based, **not** webhooks (§8.7 stays deferred).
-- **Past-due cancel refusal (13.4): PENDING.** A cancelled scheduled campaign can falsely read
-  `CANCELLED` even when it may already have sent. Phase 13 refuses a past-due cancel with `409`
-  (resolved decision §8.13).
+- **Scheduled-send outcome / reconcile (13.3): RESOLVED.** A `SCHEDULED` campaign is now settled
+  by a Cron `scheduled()` handler (`wrangler.jsonc` `triggers.crons` `*/15 * * * *`;
+  `reconcileScheduledCampaigns` in `src/queue/reconcile.ts`) that flips any past-due `SCHEDULED`
+  campaign to `SENT` / `PARTIAL_FAILURE` from its batch rows — time-based, **not** webhooks (§8.7
+  stays deferred) and with **no** provider call. It is idempotent (a settled row drops out of the
+  `status = 'SCHEDULED'` predicate, so an overlapping run is a no-op). See resolved decision §8.12.
+- **Past-due cancel refusal (13.4): RESOLVED.** `POST /api/campaigns/:id/cancel` now **refuses** a
+  **scheduled** campaign whose `schedule_date` is already in the past with **`409`** (and an
+  explanatory message) instead of writing a local `CANCELLED` — the provider may already have sent
+  it, so a `CANCELLED` label would be a lie; the Flow D reconcile settles the row to
+  `SENT`/`PARTIAL_FAILURE` instead. A still-future scheduled campaign and a `QUEUED` immediate
+  campaign cancel exactly as before. This lands roadmap **11.7** (do not fix 11.7 separately,
+  explicitly). See resolved decision §8.13.
