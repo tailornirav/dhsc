@@ -97,6 +97,9 @@ dhsc/
       "max_retries": 5,
       "dead_letter_queue": "sms-campaign-dlq"
     }]
+  },
+  "triggers": {
+    "crons": ["*/15 * * * *"]
   }
 }
 ```
@@ -104,6 +107,13 @@ dhsc/
 `max_batch_size: 5` means each consumer invocation makes **at most 5 provider fetches** —
 comfortably under the 50-sub-request ceiling — while throttling gently against provider rate
 limits.
+
+`triggers.crons` schedules the **scheduled-send reconcile** (roadmap Phase 13, tech.md Flow D):
+the Worker's `scheduled()` handler runs every 15 minutes and settles any `SCHEDULED` campaign whose
+`schedule_date` has passed (→ `SENT`/`PARTIAL_FAILURE`). This is the time-based substitute for
+delivery webhooks (mission.md §8.7/§8.12) — it records the accept-and-elapse outcome without
+polling the provider (which exposes no status endpoint). The cadence matches the provider's
+15-minute slot granularity; a Cron Trigger is **free** on the Free plan.
 
 `migrations_dir` points wrangler at the directory **drizzle-kit** emits into
 (`src/db/migrations`); without it wrangler looks in `./migrations` and finds nothing.
@@ -174,6 +184,14 @@ CREATE TABLE campaign_batches (
 );
 
 CREATE INDEX idx_batches_campaign ON campaign_batches(campaign_id, status);
+
+-- Create idempotency (roadmap Phase 13). One row per client-supplied Idempotency-Key.
+CREATE TABLE idempotency_keys (
+  key           TEXT PRIMARY KEY,   -- client UUID (Idempotency-Key header)
+  campaign_id   TEXT NOT NULL,      -- the campaign this key created
+  response_json TEXT NOT NULL,      -- the stored 202 body, replayed on a repeat
+  created_at    TEXT NOT NULL
+);
 ```
 
 **Opt-outs:** the brief requires an opt-out blacklist that is always stripped from audiences.
@@ -205,6 +223,14 @@ identical either way:
   plus `SCHEDULED` (future), and the cancellation branch `CANCELLING` → `CANCELLED`.
 - `campaign_batches.status`: `PENDING` → (`SENT` | `SCHEDULED` | `FAILED` | `CANCELLED`).
 
+**Scheduled settle (Phase 13).** A scheduled campaign parks at `SCHEDULED` once every batch has
+reached the provider (each carries a `sendmode_request_id`). It is **not** terminal: when
+`schedule_date` elapses, the Cron reconcile (Flow D) settles the campaign to `SENT`
+(all batches `SCHEDULED` → treated as accepted) or `PARTIAL_FAILURE` (any batch `FAILED`). “Sent”
+here means **accepted + window elapsed**, never delivery-confirmed (mission.md §8.7/§8.12). A
+`CANCELLED` write is only ever reached from the cancellation branch, and a past-due cancel is
+**refused** (`409`) rather than allowed to overwrite a real send (mission.md §8.13).
+
 ---
 
 ## 5. Web API Surface (5 endpoints, all behind auth)
@@ -212,10 +238,10 @@ identical either way:
 | Method | Endpoint | Behavior |
 | :--- | :--- | :--- |
 | `GET` | `/api/balance` | Proxy `GET /3.0/balance`; return `{ balance, audience_count }`. |
-| `POST` | `/api/campaigns` | Validate, resolve the audience (all contacts, **or** a pasted `recipients` list — Phase 12), check balance, create campaign + batch rows, enqueue, `202 Accepted`. |
+| `POST` | `/api/campaigns` | Validate, resolve the audience (all contacts, **or** a pasted `recipients` list — Phase 12), check balance, create campaign + batch rows, enqueue, `202 Accepted`. Accepts an optional **`Idempotency-Key`** header (Phase 13): a repeated key returns the original result instead of creating a second campaign. |
 | `GET` | `/api/campaigns` | List campaigns by `created_at DESC`; support `?filter=upcoming` \| `history`. |
 | `GET` | `/api/campaigns/:id` | Live progress: `completed_batches/total_batches`, invalid count, batch errors. |
-| `POST` | `/api/campaigns/:id/cancel` | Mark `CANCELLING`, enqueue cancel jobs for scheduled batches. |
+| `POST` | `/api/campaigns/:id/cancel` | Mark `CANCELLING`, enqueue cancel jobs for scheduled batches. Returns **`409`** when a **scheduled** campaign's `schedule_date` is already in the past (Phase 13 — the provider may have sent it; do not write a false `CANCELLED`). |
 
 Plus:
 - `POST /api/test-sms` — single, unscheduled test SMS to one UK number (used by the Test SMS
@@ -229,6 +255,15 @@ Plus:
   suffix `Stop: dhsc.uk/x`) to submit their phone number; it posts to `/api/opt-out`. This is the
   **only** unauthenticated route.
 
+**Create idempotency (Phase 13).** `POST /api/campaigns` accepts an optional **`Idempotency-Key`**
+header. The SPA generates a fresh UUID **per submit attempt** and sends it on every retry of that
+same submission. The server records the key and the campaign it produced in an `idempotency_keys`
+table (forward-only migration); a request carrying a key that already exists returns the **stored
+original response** (and never writes a second campaign or a second spend). A request **without** a
+key behaves exactly as today. This is the create-side counterpart to the consumer's idempotency
+guards (hard rule #11) — a create is a real, irreversible charge, so a double-submit must not
+double-spend.
+
 ### Auth rule (non-negotiable)
 
 Every `/api/*` route except the public opt-out route must be **rejected when unauthenticated**.
@@ -241,12 +276,17 @@ it. Queue handlers trust their payloads only because only authenticated requests
 
 ### Consumer entrypoint
 
-`src/index.ts` exports both Hono `fetch` and a `queue(batch, env, ctx)` handler. Each
-invocation processes up to 5 messages sequentially (or with gentle parallelism) with a small
-delay (~200 ms) between provider calls. Every message is `{ type: 'DISPATCH_BATCH' | 'CANCEL_BATCH', campaignId, batchId, ... }`.
+`src/index.ts` exports Hono `fetch`, a `queue(batch, env, ctx)` handler, and a `scheduled()`
+handler (Phase 13 — the Cron reconcile, Flow D). Each queue invocation processes up to 5 messages
+sequentially (or with gentle parallelism) with a small delay (~200 ms) between provider calls.
+Every message is `{ type: 'DISPATCH_BATCH' | 'CANCEL_BATCH', campaignId, batchId, ... }`.
 
 ### Flow A — Create campaign (`POST /api/campaigns`)
 
+0. **Idempotency (Phase 13):** if the request carries an `Idempotency-Key` header whose key already
+exists in `idempotency_keys`, return the **stored original response** (and do nothing else — no
+second campaign, no second spend). Otherwise proceed, and on success persist the key → campaign id
+→ response body. No key ⇒ no change.
 1. **Validate:** `name` non-empty; `sender_id` = the provisioned value (validate ≤11 chars, no
    `<`/`>`); `message` — opt-out suffix is appended first, then the operator's text must fit
    the remaining budget with **160 chars as the hard max** in GSM-7 (fewer when UCS-2); no
@@ -268,14 +308,19 @@ delay (~200 ms) between provider calls. Every message is `{ type: 'DISPATCH_BATC
    `{ type: 'DISPATCH_BATCH', campaignId, batchId, chunkIndex, recipients }` — where `recipients`
    is the batch's **opt-out-stripped** number list (already computed for the estimate). The
    consumer sends exactly these, so a blacklisted number can never reach the provider.
-5. Return **`202 Accepted`** (target: < 1 s).
+5. Return **`202 Accepted`** (target: < 1 s); when an `Idempotency-Key` was supplied, the same
+   body is stored under it for replay.
 
 ### Flow B — Cancel campaign (`POST /api/campaigns/:id/cancel`)
 
 Cancellation runs through the **same queue** because Sendmode needs one `DELETE /3.0/schedule`
 per `request_id`.
 
-1. Verify campaign is `QUEUED`/`SCHEDULED` and `schedule_date` is still in the future.
+1. Verify campaign is `QUEUED`/`SCHEDULED` and `schedule_date` is still in the future. A
+   **scheduled** campaign whose `schedule_date` has passed is **refused with `409`** (Phase 13,
+   mission.md §8.13) — the provider may already have sent it and a refused delete cannot be
+   trusted, so we must not write a false `CANCELLED`; the Flow D reconcile settles the row instead.
+   (This pre-condition also closes roadmap 11.7, which flagged the guard as documented-but-missing.)
 2. Set `campaigns.status = 'CANCELLING'`.
 3. Mark still-`PENDING` batches `CANCELLED` in D1 (they never reached the provider).
 4. Fetch `SCHEDULED` batches with a `sendmode_request_id`; enqueue
@@ -310,7 +355,35 @@ per `request_id`.
 2. `DELETE https://sms-rest.sendmode.dev/3.0/schedule` with `Content-Type: application/json`,
    `Authorization: ${env.SENDMODE_ACCESS_KEY}`, body `{"request_id": requestId}`.
 3. `200` + `is_successful` → mark `CANCELLED`, `ack`; retry on transient `5xx`/`429`.
-4. When zero `SCHEDULED`/`PENDING` remain, set campaign `CANCELLED`.
+4. When zero `SCHEDULED`/`PENDING` remain, set campaign `CANCELLED`. **Precedence (Phase 13):**
+   when the batches have **mixed** outcomes — some `SENT`/`SCHEDULED` (already at the provider) and
+   some `CANCELLED` — the campaign must settle to **`PARTIAL_FAILURE`, not `CANCELLED`**; a
+   `CANCELLED` label must only ever mean *nothing* was sent. `tallyBatches` (`src/queue/campaign-status.ts`)
+   is corrected so `completed > 0` wins over the `cancelled > 0` branch it currently checks first.
+
+### Flow D — Scheduled reconcile (Cron `scheduled()` handler)
+
+A **Cron Trigger** (`"triggers": { "crons": ["*/15 * * * *"] }` in `wrangler.jsonc`) invokes the
+Worker's `scheduled()` handler every 15 minutes. It is the time-based substitute for delivery
+webhooks (mission.md §8.7/§8.12): Sendmode exposes no status endpoint, so the outcome of a
+scheduled send is inferred from **provider acceptance + elapsed window**, never from a delivery
+receipt.
+
+1. Select every campaign with `status = 'SCHEDULED'` and `schedule_date < now` (the window has
+   passed). One indexed query; bounded by the handful of scheduled campaigns at any time.
+2. For each, recompute from its batch rows and settle: all batches `SCHEDULED`/`SENT` → `SENT`;
+   any batch `FAILED` → `PARTIAL_FAILURE`. (This is the same `recomputeCampaign`/`tallyBatches`
+   path Flow C uses, so the aggregate can never disagree.) Set `updated_at`.
+3. Idempotent by construction: the `status = 'SCHEDULED'` predicate means a settled campaign drops
+   out of the set, so a duplicate or overlapping Cron run is a no-op. A campaign cancelled *before*
+   its window never enters the set (its status is `CANCELLING`/`CANCELLED`), so a reconcile can
+   never resurrect a cancelled campaign.
+4. It makes **no provider call** and spends nothing — it only writes D1. Because it is a Cron
+   Trigger it runs even when no operator opens the dashboard.
+
+> **Outcome semantics.** A `SENT` written by Flow D means **"accepted by the provider and the
+> scheduled window has elapsed,"** not "delivered." This is exactly the terminal state
+> mission.md §8.7 already accepts; Flow D closes the gap where the row was never updated at all.
 
 ---
 
@@ -411,6 +484,16 @@ per `request_id`.
 > unused `getIdentity` export was removed and identity is intentionally not persisted (see item 1
 > above). 11.5–11.7 remain
 > correctness/polish items — see `roadmap.md`.
+>
+> **Phase 11.7 is superseded by Phase 13.** 11.7 (align `beginCancellation` with its
+> `schedule_date`-future pre-condition) is landed by the Phase 13 past-due cancel refusal: a
+> scheduled campaign past its `schedule_date` is refused `409` rather than cancelled, so the
+> documented pre-condition and the code agree. **Phase 13** also closes two money-honesty gaps a
+> review of Phases 0–12 found: **create idempotency** (a retried/resubmitted `POST /api/campaigns`
+> could double-spend — the optional `Idempotency-Key` header + `idempotency_keys` table now make a
+> repeat return the original result) and **scheduled-send reconciliation** (`SCHEDULED` campaigns
+> were never settled in the DB — a Cron `scheduled()` reconcile now records the
+> accept-and-window-elapsed outcome, consistent with the webhooks-deferred decision above).
 
 ---
 

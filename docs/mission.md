@@ -145,7 +145,10 @@ These are now **settled facts**. Treat them as requirements, not preferences.
    the operator can see what was tested.
 7. **Webhooks:** *deferred / undecided.* For now the terminal state is **"accepted by the
    provider"** (`request_id` returned). We do **not** consume delivery webhooks yet. See
-   backlog in `roadmap.md` if this changes.
+   backlog in `roadmap.md` if this changes. The Phase 13 reconcile (§8.12) closes the *recording*
+   gap on this statement: a scheduled campaign's row is settled to `SENT`/`PARTIAL_FAILURE` when its
+   window elapses, but that status still means **accepted + window elapsed**, **not**
+   delivery-confirmed — the deferral of real delivery status via webhooks is unchanged.
 8. **Concurrency/rate limits:** use the **defaults** (`max_batch_size: 5`,
    `max_concurrency: 2`, `max_retries: 5`). Sendmode publishes no rate limit we must throttle
    below; if Cloudflare or the provider surfaces throttling in practice, revisit these values.
@@ -166,9 +169,36 @@ These are now **settled facts**. Treat them as requirements, not preferences.
     path already does). No new table, no migration, no new status, no new endpoint — the
     optional `recipients` field on `POST /api/campaigns` is the whole contract. Input that
     fails validation is **refused** (`400 validation_failed`, no rows written, nothing enqueued).
+11. **Create idempotency (roadmap Phase 13):** `POST /api/campaigns` accepts an **optional
+    `Idempotency-Key` header** (the SPA sends a fresh UUID **per submit attempt**). A create request
+    that carries a key already seen is **not** re-executed: the stored original result is returned
+    instead, so a retry, a resubmit, or a network replay **cannot double-spend** (each create is a
+    real, irreversible charge). Keys are persisted in a dedicated `idempotency_keys` table (key → the
+    stored response + the campaign it created); a create with **no** key keeps today's behaviour. This
+    is a forward-only migration. (Rationale: the current `insertCampaign` uses fresh UUIDs per
+    request, so nothing stops a second POST from creating a second campaign and a second spend.)
+12. **Honest scheduled-send outcome — time-based reconcile (roadmap Phase 13):** a provider-accepted
+    **scheduled** campaign currently records `request_id` but its `campaigns`/`campaign_batches` rows
+    stay `SCHEDULED` **forever** — the DB never records what actually happened, so the Queued/History
+    views are dishonest. Because Sendmode exposes **no** endpoint to query a scheduled/sent request's
+    status (see `docs/sms-api.md`; only balance/send/schedule/cancel exist) and webhooks remain
+    **deferred** (§8.7), the outcome is derived **by time, not by delivery receipt**: a native
+    **Cron Trigger** (`scheduled()` handler) reconciles past-due `SCHEDULED` campaigns to `SENT` /
+    `PARTIAL_FAILURE`. “Sent” here means **“accepted by the provider and the scheduled window has
+    elapsed”** — explicitly **not** delivery-confirmed, which is the honest terminal state the
+    mission already accepts (§8.7). The reconcile also settles any straggler (e.g. a scheduled
+    campaign whose batches all reached the provider). It runs on the Worker, so it happens even when
+    nobody opens the dashboard.
+13. **Past-due scheduled cancel is refused (roadmap Phase 13):** once a scheduled campaign's
+    `schedule_date` has passed, cancelling it can no longer be trusted — the provider may already
+    have sent it, and a refused `DELETE /3.0/schedule` does **not** mean the send did not happen.
+    `POST /api/campaigns/:id/cancel` is therefore **refused with `409`** (and an explanatory message)
+    when `schedule_date` is in the past; the reconcile job settles the row to `SENT`/
+    `PARTIAL_FAILURE` instead. This closes the false “CANCELLED” that today's flow can write locally
+    even when the provider refused the delete. (Cancelling a campaign that is still in the future is
+    unchanged.)
 
 ### Still genuinely open
-
 - **Opt-out pubsub detail:** does the public opt-out page simply stop future campaigns, or
   should it also be reflected in any "delivered" reporting? (Assumed: stop future sends only.)
 - **Access JWT verification:** do we verify the `Cf-Access-Jwt-Assertion` signature in the
@@ -187,3 +217,12 @@ These are now **settled facts**. Treat them as requirements, not preferences.
   `GET /3.0/balance` check that refuses the send with the same `insufficient_balance` shape
   (and the same `502 provider_error` on an outage) when the balance cannot cover the credit.
   The old "not blocked by balance" behaviour and the code comment that stated it are gone.
+- **Create idempotency (13.1–13.2): PENDING.** A retried/resubmitted `POST /api/campaigns` can
+  currently create a second campaign and double-spend. Phase 13 adds the optional `Idempotency-Key`
+  header + `idempotency_keys` table (resolved decision §8.11).
+- **Scheduled-send outcome / reconcile (13.3): PENDING.** Scheduled campaigns never leave
+  `SCHEDULED` in the DB. Phase 13 adds a Cron `scheduled()` reconcile (resolved decision §8.12) —
+  time-based, **not** webhooks (§8.7 stays deferred).
+- **Past-due cancel refusal (13.4): PENDING.** A cancelled scheduled campaign can falsely read
+  `CANCELLED` even when it may already have sent. Phase 13 refuses a past-due cancel with `409`
+  (resolved decision §8.13).

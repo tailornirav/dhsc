@@ -655,6 +655,10 @@
 > **Defect.** `tech.md` Flow B step 1 says cancel must "verify … `schedule_date` is still in the
 > future"; `beginCancellation` (`src/services/campaigns.ts`) checks **status only**.
 
+> **Superseded by Phase 13 (13.4).** The fix is the past-due cancel refusal: a scheduled campaign
+> past its `schedule_date` returns **`409`** rather than being cancelled, so the code matches the
+> documented pre-condition. See **Phase 13** below; do not land a separate fix here.
+
 - **11.7.1 ☐** Either add the `schedule_date`-in-the-future guard (reject/normalise a past-but-
   still-`SCHEDULED` campaign) **or** relax the doc to match the code. Choose the behaviour that
   matches reality (the provider may still accept the `DELETE`), and record it in `tech.md`
@@ -806,6 +810,142 @@
 - `npm run build` → `web/dist` still builds and includes `x.html`.
 - **No migration, no schema drift** (`npx drizzle-kit generate` emits **no** new migration).
 - **No live provider call and no spend at any point.**
+
+---
+
+## Phase 13 — Money-honesty fixes (create idempotency + scheduled reconcile) ☐ TODO
+
+> **Why this phase exists:** a review of Phases 0–12 found two ways the system can lie about money
+> or spend it twice. (1) **`POST /api/campaigns` has no idempotency** — a retry, a double-click, or
+> a resubmitted form creates a **second** campaign and a **second irreversible spend**; nothing in
+> the create path stops it (`insertCampaign` mints fresh UUIDs per request, so the DB cannot even
+> notice a repeat). This is the only **HIGH**-severity finding. (2) **Scheduled sends are never
+> settled in the DB** — a scheduled campaign is accepted by the provider (`request_id` stored) and
+> then sits at `SCHEDULED` **forever**; the Queued/History views never record what actually
+> happened. Worse, an operator can cancel such a campaign and the UI will say `CANCELLED` even
+> though it may already have gone out — the client is told it never sent when it did.
+>
+> **Design mandate (all four decisions already resolved — see `mission.md` §8.11–§8.13; do NOT
+> re-litigate them, and do NOT introduce webhooks):**
+> - **Outcome source:** Sendmode exposes **no** endpoint to query a scheduled/sent request's status
+>   (`docs/sms-api.md` — only balance/send/schedule/cancel exist) and webhooks stay **deferred**
+>   (§8.7). So the outcome is **time-based**, not delivery-confirmed: "sent" = **"accepted +
+>   window elapsed."**
+> - **Reconcile mechanism:** a native **Cron Trigger** (`scheduled()` handler + `triggers.crons`),
+>   **not** lazy-on-read — it must work even when nobody opens the dashboard.
+> - **Idempotency storage:** a new **`idempotency_keys`** table (key → stored response +
+>   campaign id) via a **forward-only** migration — the cleanest way to replay an exact retry.
+> - **Past-due cancel:** **refuse with `409`** (honest) rather than write a false `CANCELLED`.
+>
+> **Scope guard.** Stay surgical: do **not** rewrite the provider layer, the queue flows, or the
+> auth model. Add no new status value. Every step ships with a regression test; the suite (146
+> green) must stay green and grow. **No live provider call and no spend at any point.**
+>
+> **Records to add to `mission.md` §8 in the same change (drafted here — do not guess):** idempotency
+> key on create (§8.11), time-based scheduled reconcile with honest "accepted + window elapsed"
+> semantics (§8.12), and the past-due cancel refusal (§8.13). §8.7 (webhooks deferred) is **not**
+> reversed; the reconcile *closes the recording gap* on its "terminal state is provider acceptance"
+> statement.
+
+### 13.1 ☐ Migration: `idempotency_keys` table
+
+> **Nano-step, schema only.** One new table; no column changes to existing tables.
+
+- **13.1.1 ☐** Add an `idempotencyKeys` `sqliteTable` to `src/db/schema.ts`: `key TEXT PRIMARY KEY`
+  (the client `Idempotency-Key` value), `campaign_id TEXT NOT NULL`, `response_json TEXT NOT NULL`
+  (the stored `202` body to replay), `created_at TEXT NOT NULL`. Mirror the Drizzle style of the
+  existing tables (no invented columns beyond these).
+- **13.1.2 ☐** Emit the migration with `npx drizzle-kit generate` (forward-only; appends alongside
+  the existing migrations in `src/db/migrations/`, editing **no** prior file). Apply locally with
+  `npx wrangler d1 migrations apply sms-campaigns-db --local`.
+- **13.1.3 ☐** Add the table to `docs/tech.md` §4 (done in the docs pass above — confirm it matches
+  the emitted SQL).
+- **Verify:** `npx drizzle-kit generate` emits exactly one new migration; `npm run typecheck` clean;
+  the local apply succeeds. **No data migration, no backfill.**
+
+### 13.2 ☐ Create idempotency in `POST /api/campaigns` (+ SPA key)
+
+> **Nano-step.** The only behaviour change is *at the top of the create handler*; the rest of Flow A
+> is untouched on the happy path.
+
+- **13.2.1 ☐** In `src/routes/campaigns.ts` (`POST /api/campaigns`), read the optional
+  `Idempotency-Key` request header. When present, look it up in `idempotency_keys` **before** any
+  provider call or write: if the key exists, return the **stored original response** (same status
+  `202` + body) and do nothing else — no balance check, no insert, no enqueue.
+- **13.2.2 ☐** When the key is new, run the create flow exactly as today; on success persist
+  `{ key, campaignId, responseJson, createdAt }` in the **same D1 write path** as the campaign
+  insert where practical (a short follow-up `INSERT` is acceptable; keep it ≤ a couple of statements
+  so the D1 per-invocation budget is untouched). A create with **no** key keeps today's behaviour
+  byte-for-byte.
+- **13.2.3 ☐** Add a small service helper (e.g. `getIdempotentResult` / `saveIdempotentResult` in
+  `src/services/campaigns.ts`) so the route stays thin and the logic is unit-testable. Do **not**
+  add provider calls to it.
+- **13.2.4 ☐** In the SPA (`web/src/api.ts` + the submit handler in `App.tsx`), generate a UUID
+  (`crypto.randomUUID()`) **per submit attempt** and send it as the `Idempotency-Key` header on
+  `createCampaign`; keep the same key across retries of that one submission so a retry is safe.
+- **13.2.5 ☐** Document the header in `tech.md` §5 + Flow A step 0 (done above).
+- **Verify:** `npm test` green; a new `test/phase6.test.ts` case posts the **same** key twice and
+  asserts **one** `campaigns` row, **one** enqueue, and an identical `202` body on both calls;
+  `npm run typecheck` + `npm run typecheck:web` clean. **No live provider call.**
+
+### 13.3 ☐ Scheduled reconcile: Cron `scheduled()` handler
+
+> **Nano-step, the honesty fix.** Settle past-due `SCHEDULED` campaigns **by time**, not by polling
+> (the provider has no status endpoint) and **not** by webhooks (§8.7 stays deferred).
+
+- **13.3.1 ☐** Add `"triggers": { "crons": ["*/15 * * * *"] }` to `wrangler.jsonc` and export a
+  `scheduled()` handler from `src/index.ts` (alongside `fetch`/`queue`). The handler calls a new
+  service function and needs **no** message plumbing.
+- **13.3.2 ☐** Add the reconcile service (e.g. `reconcileScheduledCampaigns` in
+  `src/services/campaigns.ts`, or a small `src/queue/reconcile.ts` if that reads cleaner):
+  `SELECT id FROM campaigns WHERE status = 'SCHEDULED' AND schedule_date < ?` (now, ISO UTC), then
+  for each call the existing `recomputeCampaign`/`tallyBatches` path so the aggregate is derived
+  from batch rows exactly as Flow C does — all batches `SCHEDULED`/`SENT` → `SENT`, any `FAILED` →
+  `PARTIAL_FAILURE`. Idempotent: the `status = 'SCHEDULED'` predicate drops settled rows, so an
+  overlapping run is a no-op, and a cancelled campaign never enters the set.
+- **13.3.3 ☐** Make the clock injectable (same `now?: () => string` pattern as the queue handlers)
+  so the reconcile is deterministically testable. **No provider call anywhere in this path.**
+- **13.3.4 ☐** Document Flow D in `tech.md` §6 and the Cron binding in §3 (done above); note the
+  `SCHEDULED → SENT` transition in the §4 status machine. Record the decision in `mission.md` §8.12.
+- **Verify:** `npm test` green; a new test creates a `SCHEDULED` campaign with a **past**
+  `schedule_date`, runs the reconcile with an injected clock, and asserts the campaign flips to
+  `SENT` (and a mixed-batch variant flips to `PARTIAL_FAILURE`); a second run writes nothing new.
+  `npm run typecheck` clean. **No live provider call.**
+
+### 13.4 ☐ Refuse a past-due scheduled cancel (`409`)
+
+> **Nano-step, the "don't lie about it" fix.** Also lands roadmap **11.7** (do not fix 11.7
+> separately).
+
+- **13.4.1 ☐** In `beginCancellation` (`src/services/campaigns.ts`), add the documented
+  pre-condition: when the campaign is `SCHEDULED` and its `schedule_date` is **in the past**,
+  return `{ ok: false, status: 409, message: … }` **before** flipping status — the provider may
+  already have sent it, so a local `CANCELLED` would be a lie. A still-future scheduled campaign
+  and a `QUEUED` immediate campaign cancel exactly as today.
+- **13.4.2 ☐** The route (`src/routes/campaigns.ts` cancel handler) already returns
+  `{ error: 'conflict', message }` at the returned status, so no shape change is needed — confirm
+  the `409` reaches the client with a clear message (e.g. "This campaign's scheduled time has
+  passed; it cannot be cancelled."). Surface that message in the SPA's cancel error path.
+- **13.4.3 ☐** Fix `tallyBatches` (`src/queue/campaign-status.ts`) precedence so a campaign with
+  **any** `SENT`/`SCHEDULED` (completed) batch **and** any `CANCELLED` batch settles to
+  **`PARTIAL_FAILURE`**, not `CANCELLED` — `CANCELLED` must only ever mean nothing was sent. Update
+  the doc-comment's terminal-rules list to match.
+- **13.4.4 ☐** Document the `409` in `tech.md` §5 + Flow B step 1 (done above) and record the
+  decision in `mission.md` §8.13; mark roadmap 11.7 as superseded (done above).
+- **Verify:** `npm test` green; new `test/phase6.test.ts` cases: cancel a scheduled campaign with a
+  **past** `schedule_date` → `409` and status **unchanged** (not `CANCELLED`); cancel a **future**
+  one → still `202`; a `tallyBatches` unit case in `test/phase7.test.ts` (`SENT` + `CANCELLED` →
+  `PARTIAL_FAILURE`). `npm run typecheck` clean. **No live provider call.**
+
+### Phase 13 — Verify (automatable)
+
+- `npm test` → existing 146 **plus** the Phase 13 regression tests, all green.
+- `npm run typecheck` + `npm run typecheck:web` + `npx tsc --noEmit -p test/tsconfig.json` clean.
+- `npx drizzle-kit generate` emits **exactly one** new migration (`idempotency_keys`); no schema
+  drift on re-run.
+- `npm run build` → `web/dist` still builds and includes `x.html`.
+- **No live provider call and no spend at any point.**
+- **No webhooks introduced** — the reconcile is Cron/time-based only (`mission.md` §8.7 intact).
 
 ---
 
