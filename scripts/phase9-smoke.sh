@@ -38,8 +38,16 @@ echo "==================== 1. SPA served at / ===================="
 curl -s -o /dev/null -w "GET / -> HTTP %{http_code} (%{content_type})\n" "$BASE/"
 
 echo
-echo "==================== 2. Auth guard: anonymous /api/health ===================="
-curl -s -w "\nGET /api/health (no identity) -> HTTP %{http_code}\n" "$BASE/api/health"
+echo "==================== 2. Auth guard (dev bypass is ARMED for this session) ===================="
+# NOTE: this smoke runs `wrangler dev` with `DEV_AUTH_BYPASS:true` so the unauthenticated
+# rejection path cannot be exercised here. Deny-by-default (anonymous /api/* -> 401) is proven by
+# test/phase5.test.ts. What this section shows is that the guard is wired and routes are reachable.
+curl -s -w "\nGET /api/health (dev bypass armed) -> HTTP %{http_code}\n" "$BASE/api/health"
+
+echo
+echo "==================== 2b. Public opt-out page at /x (Phase 9.5) ===================="
+curl -s -o /dev/null -w "GET /x -> HTTP %{http_code} (%{content_type})\n" "$BASE/x"
+curl -s "$BASE/x" | grep -q 'name="number"' && echo 'GET /x contains the opt-out form field "number"' || echo 'WARNING: /x did not contain the form field'
 
 echo
 echo "==================== 3. Authenticated reads (dev bypass) ===================="
@@ -68,7 +76,7 @@ echo "--- GET /api/opt-outs — count back to 8060 ---"
 curl -s -w "\n-> HTTP %{http_code}\n" "$BASE/api/opt-outs"
 
 echo
- echo "==================== 5. Real Access identity path (header, no bypass) ===================="
+ echo "==================== 5. Access identity header path (note: dev bypass still armed) ===================="
 echo "--- GET /api/campaigns?filter=history with Cf-Access-Authenticated-User-Email ---"
 curl -s -w "\n-> HTTP %{http_code}\n" "$BASE/api/campaigns?filter=history" \
   -H 'Cf-Access-Authenticated-User-Email: operator@dhsc.uk'

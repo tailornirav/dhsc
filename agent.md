@@ -39,8 +39,11 @@ and drops the rest (see below).
 disagree, fix both in the same change.
 
 > Note: the repo is no longer bootstrapping — `src/`, `src/routes/`, `src/services/`,
-> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–9 are
-> complete (see `docs/roadmap.md`); the next step is Phase 10 (polish, security, deploy).
+> `src/queue/`, `src/lib/`, `web/`, and `scripts/seed-audience.ts` are all real. Phases 0–9 plus the
+> Phase 9.5 public opt-out page (`/x`) are complete (see `docs/roadmap.md`); the remaining Phase 10
+> work is polish/security/deploy, whose automatable checks pass locally and whose live steps
+> (`wrangler secret put`, `wrangler deploy`, a real test SMS) are ops actions. See `README.md` for
+> the runbook.
 
 ---
 
