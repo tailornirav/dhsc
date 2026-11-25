@@ -718,19 +718,19 @@
 > decision (§8.10) and the §5 non-goal clarification (pasting a one-off list is in scope;
 > persisting/editing a contact list is not).
 
-### 12.1 ☐ Server: accept an optional manual `recipients` list on create
+### 12.1 ✅ Server: accept an optional manual `recipients` list on create
 
 > **Nano-step, no schema change.** Add the audience *source* branch only; every downstream step
 > of Flow A stays byte-identical.
 
-- **12.1.1 ☐** In `src/lib/validate.ts`, add a pure parser — e.g.
+- **12.1.1 ✅** In `src/lib/validate.ts`, add a pure parser — e.g.
   `parseManualRecipients(raw: string): { numbers: string[]; invalid: string[] }` — that splits
   input on newlines, commas, and semicolons (plus surrounding whitespace), runs each entry
   through `normalizeUkMobile`, de-duplicates the valid set (order-preserving), and returns the
   invalid raw entries **as-given** so the API can name them in the error. Keep it pure so both
   the route and the web mirror can share the rule. **Do not** invent a second number regex —
   `normalizeUkMobile` is the one source of truth (mission.md §6.5, tech.md §9.4).
-- **12.1.2 ☐** In `src/routes/campaigns.ts` (`toCampaignInput` + the `POST /api/campaigns`
+- **12.1.2 ✅** In `src/routes/campaigns.ts` (`toCampaignInput` + the `POST /api/campaigns`
   handler), read `recipients` as an optional string. When present and non-blank:
     1. parse it with `parseManualRecipients`; if `invalid.length > 0` return
        `400 validation_failed` with one issue per bad entry
@@ -741,7 +741,7 @@
        default path builds (`chunkIndex` = 0,1,2… in order; no `audience_chunks` row is read).
     3. if the stripped list is empty → `400 empty_audience` (same shape as today).
   When `recipients` is absent/blank, keep the **current** default path exactly.
-- **12.1.3 ☐** Leave `insertCampaign`, `enqueueDispatch`, the queue consumer, and
+- **12.1.3 ✅** Leave `insertCampaign`, `enqueueDispatch`, the queue consumer, and
   `src/services/campaigns.ts` **untouched** — they already take `PlannedBatch[]` with explicit
   `recipients`. Confirm by reading them; this step should add **zero** code there.
 - **Verify:** `npm test` green (existing 132 all pass unchanged) + `npm run typecheck` clean.

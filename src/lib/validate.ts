@@ -97,6 +97,44 @@ export function isValidUkMobile(input: string): boolean {
   return normalizeUkMobile(input) !== null;
 }
 
+/** Result of parsing a pasted manual recipient list. */
+export interface ManualRecipients {
+  /** Valid, deduplicated, E.164-normalised numbers (order-preserving). */
+  numbers: string[];
+  /** Entries that failed normalization, exactly as the operator typed them. */
+  invalid: string[];
+}
+
+/**
+ * Parse an operator-pasted recipient list into normalised numbers plus the raw bad entries.
+ *
+ * Splits on newlines, commas, and semicolons (with surrounding whitespace), normalises each
+ * entry with `normalizeUkMobile` — the one authoritative UK-mobile rule (mission.md §6.5,
+ * tech.md §9.4) — de-duplicates the valid set while preserving first-seen order, and returns
+ * the invalid entries **as given** so the API can name the offending value in its error.
+ *
+ * Pure and I/O-free so the route and the web mirror share one rule (roadmap 12.1.1).
+ */
+export function parseManualRecipients(raw: string): ManualRecipients {
+  const numbers: string[] = [];
+  const invalid: string[] = [];
+  const seen = new Set<string>();
+
+  for (const entry of raw.split(/[\n,;]+/)) {
+    const trimmed = entry.trim();
+    if (trimmed === "") continue;
+    const normalized = normalizeUkMobile(trimmed);
+    if (normalized === null) {
+      invalid.push(trimmed);
+    } else if (!seen.has(normalized)) {
+      seen.add(normalized);
+      numbers.push(normalized);
+    }
+  }
+
+  return { numbers, invalid };
+}
+
 // ---------------------------------------------------------------------------------------
 // Campaign input
 // ---------------------------------------------------------------------------------------

@@ -12,15 +12,17 @@ import type { AppEnv } from "../env.js";
 import { optionalString, readJsonBody, requiredString } from "../lib/http.js";
 import {
   campaignCredits,
+  parseManualRecipients,
   validateCampaign,
   type CampaignInput,
   type ValidationIssue,
 } from "../lib/validate.js";
 import { nowUtcIso } from "../lib/uk-time.js";
 import { getBalance } from "../services/sendmode.js";
-import { loadAudienceChunks, loadOptOutSet } from "../services/audience.js";
+import { loadAudienceChunks, loadOptOutSet, type AudienceChunk } from "../services/audience.js";
 import {
   beginCancellation,
+  chunkArray,
   getCampaign,
   getCampaignBatches,
   insertCampaign,
@@ -107,9 +109,29 @@ export function registerCampaignRoutes(app: Hono<AppEnv>): void {
     if (!validated.ok) return c.json(issuesBody(validated.issues), 400);
     const value = validated.value;
 
-    // Build the exact audience we will send to: every chunk minus opt-outs.
+    // Build the exact audience we will send to: every chunk minus opt-outs. When the operator
+    // pasted a manual `recipients` list (roadmap 12.1) that list is the audience source instead;
+    // every downstream step stays byte-identical.
     const optOuts = await loadOptOutSet(c.env.DB);
-    const chunks = await loadAudienceChunks(c.env.DB, optOuts);
+
+    let chunks: AudienceChunk[];
+    const manual = optionalString(parsed.value, "recipients")?.trim();
+    if (manual) {
+      const { numbers, invalid } = parseManualRecipients(manual);
+      if (invalid.length > 0) {
+        // Refuse the whole request on any bad entry — never silently drop (roadmap 12.1.2).
+        return c.json(issuesBody(invalid.map((entry): ValidationIssue => ({
+          field: "recipients",
+          code: "invalid_number",
+          message: `“${entry}” is not a valid UK mobile.`,
+        }))), 400);
+      }
+      const stripped = numbers.filter((n) => !optOuts.has(n));
+      chunks = chunkArray(stripped).map((recipients, chunkIndex) => ({ chunkIndex, recipients }));
+    } else {
+      chunks = await loadAudienceChunks(c.env.DB, optOuts);
+    }
+
     const totalRecipients = chunks.reduce((sum, chunk) => sum + chunk.recipients.length, 0);
 
     if (totalRecipients === 0) {
