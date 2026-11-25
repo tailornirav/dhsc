@@ -45,6 +45,7 @@ import {
   messageBudget,
   normalizeUkMobile,
   OPT_OUT_SUFFIX,
+  parseManualRecipients,
   validateCampaign,
 } from "../src/lib/validate.js";
 
@@ -235,6 +236,36 @@ test("normalizeUkMobile: rejects non-UK-mobile inputs", () => {
   ]) {
     assert.equal(normalizeUkMobile(input), null, `should reject ${input}`);
     assert.equal(isValidUkMobile(input), false);
+  }
+});
+
+test("parseManualRecipients: splits on newlines/commas/semicolons, trims, and normalizes (order-preserving)", () => {
+  const result = parseManualRecipients(
+    "  +447700900077 \n 07700900078, 447700900079 ;\t0770-0900-080\n\n",
+  );
+  assert.deepEqual(result, {
+    numbers: ["+447700900077", "+447700900078", "+447700900079", "+447700900080"],
+    invalid: [],
+  });
+});
+
+test("parseManualRecipients: de-duplicates the valid set while keeping first-seen order", () => {
+  const result = parseManualRecipients(
+    "+447700900077, 07700900077\n+447700900078, +447700900077",
+  );
+  assert.deepEqual(result.numbers, ["+447700900077", "+447700900078"]);
+  assert.deepEqual(result.invalid, []);
+});
+
+test("parseManualRecipients: captures invalid entries as-given and keeps them out of numbers", () => {
+  const result = parseManualRecipients("hello, +441234, +447700900077\n not a number ");
+  assert.deepEqual(result.numbers, ["+447700900077"]);
+  assert.deepEqual(result.invalid, ["hello", "+441234", "not a number"]);
+});
+
+test("parseManualRecipients: an empty or separator-only string yields no numbers and no invalid entries", () => {
+  for (const raw of ["", "  \n , ; \t"]) {
+    assert.deepEqual(parseManualRecipients(raw), { numbers: [], invalid: [] });
   }
 });
 

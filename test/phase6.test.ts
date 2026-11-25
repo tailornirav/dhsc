@@ -263,6 +263,225 @@ test("6.2 POST /api/campaigns schedules with a UTC date computed from UK local t
 });
 
 // =======================================================================================
+// 12.2 — POST /api/campaigns with a manual `recipients` list (roadmap Phase 12)
+// =======================================================================================
+
+test("12.2 manual list: mixed spellings normalize, dedupe, and enqueue as exactly the E.164 numbers", async () => {
+  const db = seededDb(); // audience is irrelevant for a manual send
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/campaigns",
+      json({
+        body: {
+          name: "Regulars",
+          senderId: "DHSC",
+          message: "Hi",
+          mode: "IMMEDIATE",
+          // +447…, bare 447…, 07… with spaces, a duplicate, and a dashed form.
+          recipients: "+447700900077\n447700900078\n07 700 900 079, 0770-0900-080\n+447700900077",
+        },
+      }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { totalRecipients: number; totalBatches: number };
+    assert.equal(body.totalRecipients, 4); // duplicate collapsed
+    assert.equal(body.totalBatches, 1); // all fit one ≤100 chunk
+
+    // D1 rows: one campaign + one batch, from the pasted numbers (no audience_chunks read).
+    assert.equal(db.campaigns.length, 1);
+    assert.equal(db.campaigns[0]?.total_recipients, 4);
+    assert.equal(db.batches.length, 1);
+
+    // The one DISPATCH_BATCH carries exactly the normalised numbers, in order.
+    assert.equal(queue.messages.length, 1);
+    const message = queue.messages[0];
+    assert.equal(message?.type, "DISPATCH_BATCH");
+    assert.deepEqual(
+      message?.type === "DISPATCH_BATCH" ? message.recipients : null,
+      ["+447700900077", "+447700900078", "+447700900079", "+447700900080"],
+    );
+    // One sendBatch() call, carrying a single message (chunks are ≤100 per message).
+    assert.deepEqual(queue.batches, [1]);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("12.2 manual list: chunks the survivors into ≤100-recipient batches", async () => {
+  const db = new FakeD1();
+  const queue = new FakeQueue();
+  const provider = stubProvider(100_000);
+
+  try {
+    const app = createApp();
+    // 101 distinct valid numbers → batch 0 has 100, batch 1 has 1.
+    const list = Array.from({ length: 101 }, (_, i) => `+447700900${String(i).padStart(3, "0")}`).join("\n");
+    const res = await app.request(
+      "/api/campaigns",
+      json({ body: { name: "Big manual", senderId: "DHSC", message: "Hi", mode: "IMMEDIATE", recipients: list } }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { totalRecipients: number; totalBatches: number };
+    assert.equal(body.totalRecipients, 101);
+    assert.equal(body.totalBatches, 2);
+
+    // No batch message carries more than 100 recipients.
+    const sizes = queue.messages.map((m) => (m.type === "DISPATCH_BATCH" ? (m.recipients ?? []).length : 0));
+    assert.deepEqual(sizes, [100, 1]);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("12.2 manual list: strips opted-out numbers from the enqueued payload", async () => {
+  const db = seededDb();
+  db.optOuts.push({ mobile_number: "+447700900078", created_at: "2026-01-01T00:00:00Z" });
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/campaigns",
+      json({
+        body: {
+          name: "Regulars",
+          senderId: "DHSC",
+          message: "Hi",
+          mode: "IMMEDIATE",
+          recipients: "+447700900077, +447700900078, +447700900079",
+        },
+      }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 202);
+    const body = (await res.json()) as { totalRecipients: number };
+    assert.equal(body.totalRecipients, 2); // the opt-out is gone
+
+    const queuedNumbers = queue.messages.flatMap((m) =>
+      m.type === "DISPATCH_BATCH" ? (m.recipients ?? []) : [],
+    );
+    assert.deepEqual(queuedNumbers, ["+447700900077", "+447700900079"]);
+    assert.ok(!queuedNumbers.includes("+447700900078"), "opted-out number is absent from the queue payload");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("12.2 manual list: one bad entry refuses the whole request (400), nothing written, nothing enqueued", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/campaigns",
+      json({
+        body: {
+          name: "Regulars",
+          senderId: "DHSC",
+          message: "Hi",
+          mode: "IMMEDIATE",
+          recipients: "+447700900077\n+441234\nhello",
+        },
+      }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string; issues: Array<{ field: string; code: string }> };
+    assert.equal(body.error, "validation_failed");
+    // One issue per bad entry, all on the `recipients` field.
+    assert.equal(body.issues.length, 2);
+    assert.ok(body.issues.every((i) => i.field === "recipients" && i.code === "invalid_number"));
+
+    assert.equal(db.campaigns.length, 0); // no campaigns row
+    assert.equal(db.batches.length, 0); // no campaign_batches row
+    assert.equal(queue.messages.length, 0); // nothing enqueued at all
+  } finally {
+    provider.restore();
+  }
+});
+
+test("12.2 manual list: every number opted out → 400 empty_audience", async () => {
+  const db = seededDb();
+  db.optOuts.push(
+    { mobile_number: "+447700900077", created_at: "2026-01-01T00:00:00Z" },
+    { mobile_number: "+447700900078", created_at: "2026-01-01T00:00:00Z" },
+  );
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/campaigns",
+      json({
+        body: {
+          name: "Regulars",
+          senderId: "DHSC",
+          message: "Hi",
+          mode: "IMMEDIATE",
+          recipients: "+447700900077, 07700900078",
+        },
+      }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string };
+    assert.equal(body.error, "empty_audience");
+    assert.equal(db.campaigns.length, 0);
+    assert.equal(queue.messages.length, 0);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("12.2 manual list: insufficient_balance refuses a manual send just like a default one", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(2); // only 2 credits; the manual list needs 3
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/campaigns",
+      json({
+        body: {
+          name: "Regulars",
+          senderId: "DHSC",
+          message: "Hi",
+          mode: "IMMEDIATE",
+          recipients: "+447700900077, +447700900078, +447700900079",
+        },
+      }),
+      makeEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400);
+    const body = (await res.json()) as { error: string; required: number; available: number };
+    assert.equal(body.error, "insufficient_balance");
+    assert.equal(body.required, 3);
+    assert.equal(body.available, 2);
+    assert.equal(db.campaigns.length, 0); // nothing persisted
+    assert.equal(queue.messages.length, 0); // nothing queued
+  } finally {
+    provider.restore();
+  }
+});
+
+// =======================================================================================
 // 6.3 — GET /api/campaigns
 // =======================================================================================
 

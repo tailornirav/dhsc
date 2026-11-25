@@ -746,9 +746,9 @@
   `recipients`. Confirm by reading them; this step should add **zero** code there.
 - **Verify:** `npm test` green (existing 132 all pass unchanged) + `npm run typecheck` clean.
 
-### 12.2 ☐ Server tests: the manual list is validated, deduped, and opt-out-stripped
+### 12.2 ✅ Server tests: the manual list is validated, deduped, and opt-out-stripped
 
-- **12.2.1 ☐** In `test/phase6.test.ts` (Flow A family), add cases driving the **real HTTP app**:
+- **12.2.1 ✅** In `test/phase6.test.ts` (Flow A family), add cases driving the **real HTTP app**:
     - a valid multi-line list (mix of `+447…`, `447…`, `07… 700 900 077` spellings) → `202`,
       and the enqueued `DISPATCH_BATCH` messages carry exactly the **normalised** numbers and
       the chunks are ≤100 per message;
@@ -759,7 +759,7 @@
       enqueued (assert the stub provider queue saw no `DISPATCH_BATCH`);
     - a list where **every** number is opted out → `400 empty_audience`;
     - `insufficient_balance` still refuses a manual send just like a default one.
-- **12.2.2 ☐** Add a pure unit test for `parseManualRecipients` in `test/phase4.test.ts`
+- **12.2.2 ✅** Add a pure unit test for `parseManualRecipients` in `test/phase4.test.ts`
   (separators, whitespace, dedupe, invalid capture).
 - **Verify:** `npm test` green (new count > 132); `npm run typecheck` + `npx tsc --noEmit -p
   test/tsconfig.json` clean. **No live provider call.**
