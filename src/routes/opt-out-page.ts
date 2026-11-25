@@ -28,17 +28,12 @@ import type { Hono } from "hono";
 import type { AppEnv } from "../env.js";
 
 /**
- * The standalone opt-out page. Kept as a plain string (not a template with interpolation) so it
- * is byte-for-byte comparable with `web/public/x.html` in the test.
+ * Shared `<style>` block (Phase 11.1.1). The standalone form page and the HTML confirmation /
+ * error result pages all render inside the same card, so the styling lives here once and is
+ * interpolated into each document. Kept as a plain string, and the form page below remains
+ * byte-for-byte comparable with `web/public/x.html` in the test.
  */
-export const OPT_OUT_PAGE_HTML = `<!doctype html>
-<html lang="en-GB">
-  <head>
-    <meta charset="utf-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <meta name="robots" content="noindex" />
-    <title>Stop messages — Dilli Haat</title>
-    <style>
+export const OPT_OUT_PAGE_STYLE = `    <style>
       :root {
         color-scheme: light dark;
       }
@@ -140,7 +135,22 @@ export const OPT_OUT_PAGE_HTML = `<!doctype html>
           color: #94a3b8;
         }
       }
-    </style>
+    </style>`;
+
+/**
+ * The standalone opt-out page. Kept as a plain string (not a template with interpolation) so it
+ * is byte-for-byte comparable with `web/public/x.html` in the test. The style block is inlined
+ * verbatim here (not interpolated) to preserve that byte-for-byte guarantee; `OPT_OUT_PAGE_STYLE`
+ * above is the single logical source and is kept identical to this literal.
+ */
+export const OPT_OUT_PAGE_HTML = `<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>Stop messages — Dilli Haat</title>
+${OPT_OUT_PAGE_STYLE}
   </head>
   <body>
     <main>
@@ -170,6 +180,61 @@ export const OPT_OUT_PAGE_HTML = `<!doctype html>
   </body>
 </html>
 `;
+
+/**
+ * Wrap body markup in the shared document shell (Phase 11.1.1). Used for the HTML confirmation
+ * and error result pages, so they share one style block with the form page.
+ */
+function optOutResultDocument(title: string, body: string): string {
+  return `<!doctype html>
+<html lang="en-GB">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <meta name="robots" content="noindex" />
+    <title>${title} — Dilli Haat</title>
+${OPT_OUT_PAGE_STYLE}
+  </head>
+  <body>
+    <main>
+${body}
+    </main>
+  </body>
+</html>
+`;
+}
+
+/**
+ * HTML confirmation shown to a customer after a successful form post (Phase 11.1.1). The message
+ * is **neutral**: it is identical whether or not the number was already opted out, so membership
+ * is never revealed (Phase 11.1.2).
+ */
+export const OPT_OUT_RESULT_HTML = optOutResultDocument(
+  "You have been opted out",
+  `      <h1>You have been opted out</h1>
+      <p>
+        You have been opted out and will not receive further messages.
+      </p>
+      <p class="notice">
+        This removes the number from all future campaigns. If you change your mind, contact the
+        restaurant to be added back.
+      </p>`,
+);
+
+/**
+ * HTML error page shown to a customer whose form post carried an invalid number (Phase 11.1.2).
+ * Mirrors the JSON `400` the API branch returns, but rendered for a human.
+ */
+export const OPT_OUT_ERROR_HTML = optOutResultDocument(
+  "That number was not recognised",
+  `      <h1>That number was not recognised</h1>
+      <p>
+        Enter a valid UK mobile number and try again.
+      </p>
+      <p class="notice">
+        Go back to the <a href="/x">opt-out form</a> and re-enter the number.
+      </p>`,
+);
 
 export function registerOptOutPageRoutes(app: Hono<AppEnv>): void {
   // `GET /x` — the customer-facing page behind `Stop: dhsc.uk/x`. Pure rendering; the form posts

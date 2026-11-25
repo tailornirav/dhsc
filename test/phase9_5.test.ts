@@ -17,6 +17,10 @@
  *      `PUBLIC_API_PATHS` is still exactly `["/api/opt-out"]` (the public API surface is not
  *      widened).
  *
+ * Phase 11.1 adds content negotiation to `POST /api/opt-out`: a plain urlencoded form post gets
+ * an HTML confirmation (or HTML error) page, while JSON / `Accept: application/json` callers keep
+ * the unchanged JSON contract. Those cases are pinned in the 11.1 section below.
+ *
  * The double for the provider lives in `test/helpers/fakes.ts`. No live provider call is made.
  */
 
@@ -27,7 +31,7 @@ import { dirname, join } from "node:path";
 import { fileURLToPath } from "node:url";
 
 import { createApp, PUBLIC_API_PATHS, type Env } from "../src/index.js";
-import { OPT_OUT_PAGE_HTML } from "../src/routes/opt-out-page.js";
+import { OPT_OUT_PAGE_HTML, OPT_OUT_RESULT_HTML, OPT_OUT_ERROR_HTML } from "../src/routes/opt-out-page.js";
 import { FakeD1, FakeQueue, stubProvider } from "./helpers/fakes.js";
 
 /** Three clean recipients across two chunks (mirrors the other phase suites). */
@@ -184,6 +188,130 @@ test("9.5 an invalid number from the form is rejected (400) and opts nobody out"
     );
     assert.equal(res.status, 400, "a non-UK number is rejected by the existing handler");
     assert.equal(db.optOuts.length, 0, "nothing is written for an invalid number");
+  } finally {
+    provider.restore();
+  }
+});
+
+// =======================================================================================
+// 11.1 — content negotiation on POST /api/opt-out (HTML confirmation vs JSON)
+// =======================================================================================
+
+test("11.1 a urlencoded form post returns an HTML confirmation (200, text/html)", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    // Exactly what the zero-JS form in web/public/x.html sends: urlencoded, no Accept header.
+    const res = await app.request(
+      "/api/opt-out",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: `number=${encodeURIComponent("07700900002")}`,
+      },
+      publicEnv(db, queue),
+    );
+
+    assert.equal(res.status, 200, "the form post succeeds");
+    assert.match(
+      res.headers.get("content-type") ?? "",
+      /text\/html/,
+      "a plain form post is answered with HTML, not JSON",
+    );
+
+    const html = await res.text();
+    assert.equal(html, OPT_OUT_RESULT_HTML, "the response is the shared confirmation page");
+    assert.match(html, /opted out/i, "the confirmation states the customer is opted out");
+    // It is not a JSON blob (the defect this phase fixes).
+    assert.ok(!html.trimStart().startsWith("{"), "the body is not raw JSON");
+
+    // The write still happened through the existing handler.
+    assert.equal(db.optOuts.length, 1);
+    assert.equal(db.optOuts[0]?.mobile_number, "+447700900002");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("11.1 a JSON post keeps the unchanged JSON contract", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/opt-out",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ number: "07700900002" }),
+      },
+      publicEnv(db, queue),
+    );
+
+    assert.equal(res.status, 200, "the JSON post succeeds");
+    assert.match(res.headers.get("content-type") ?? "", /application\/json/, "JSON callers get JSON");
+    assert.deepEqual(await res.json(), {
+      ok: true,
+      message: "You have been opted out and will not receive further messages.",
+    });
+
+    assert.equal(db.optOuts.length, 1);
+  } finally {
+    provider.restore();
+  }
+});
+
+test("11.1 an invalid form post returns an HTML error (400, text/html)", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/opt-out",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: "number=12345",
+      },
+      publicEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400, "a non-UK number is rejected");
+    assert.match(res.headers.get("content-type") ?? "", /text\/html/, "the form error is HTML");
+    assert.equal(await res.text(), OPT_OUT_ERROR_HTML, "the response is the shared error page");
+    assert.equal(db.optOuts.length, 0, "nothing is written for an invalid number");
+  } finally {
+    provider.restore();
+  }
+});
+
+test("11.1 an invalid JSON post keeps the existing 400 JSON error", async () => {
+  const db = seededDb();
+  const queue = new FakeQueue();
+  const provider = stubProvider(1000);
+
+  try {
+    const app = createApp();
+    const res = await app.request(
+      "/api/opt-out",
+      {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ number: "12345" }),
+      },
+      publicEnv(db, queue),
+    );
+
+    assert.equal(res.status, 400, "the API branch still rejects an invalid number");
+    assert.match(res.headers.get("content-type") ?? "", /application\/json/, "API errors stay JSON");
+    assert.equal(db.optOuts.length, 0);
   } finally {
     provider.restore();
   }

@@ -363,6 +363,12 @@ per `request_id`.
    handlers can trust their schema — but still re-check DB state (idempotency guards).
 6. **No data leakage:** error responses return safe messages, never stack traces or secrets.
 
+> **Known gaps tracked in `roadmap.md` Phase 11** (found in a full review; not yet fixed):
+> the public opt-out form currently receives raw JSON instead of an HTML confirmation (11.1);
+> mutating `/api/*` routes have no CSRF/`Origin` check (11.2); the opt-out blacklist is applied
+> at create time only, not re-checked at dispatch for scheduled sends (11.3). Do not treat the
+> items above as fully guaranteed until Phase 11 lands.
+
 ---
 
 ## 10. Frontend Notes (see `prototype.md` for the full UI reference)

@@ -18,6 +18,7 @@ import { readJsonBody, requiredString } from "../lib/http.js";
 import { nowUtcIso } from "../lib/uk-time.js";
 import { addOptOut, listOptOuts, removeOptOut } from "../services/opt-outs.js";
 import { optOutCount, validRecipientCount } from "../services/audience.js";
+import { OPT_OUT_ERROR_HTML, OPT_OUT_RESULT_HTML } from "./opt-out-page.js";
 
 /** Shared validation error for a bad number, keyed for form display. */
 function invalidNumber() {
@@ -71,21 +72,46 @@ export function registerOptOutRoutes(app: Hono<AppEnv>): void {
   // Public opt-out page — the only unauthenticated route.
   // Accepts JSON (from the SPA) or a plain HTML form post (urlencoded), so the page works
   // even without JavaScript. Rate limiting is applied by the /api/* middleware carve-out.
+  // Content-negotiates the response (roadmap 11.1): a plain form post gets an HTML confirmation
+  // (or HTML error) page; API/SPA callers keep the JSON contract unchanged.
   // -------------------------------------------------------------------------------------
   app.post("/api/opt-out", async (c) => {
+    const wantsHtml = prefersHtml(c.req.raw);
+
     const number = await readPublicNumber(c.req.raw);
-    if (number === null) return c.json(invalidNumber(), 400);
+    if (number === null) {
+      return wantsHtml ? c.html(OPT_OUT_ERROR_HTML, 400) : c.json(invalidNumber(), 400);
+    }
 
     const result = await addOptOut(c.env.DB, number, nowUtcIso());
-    if (result === null) return c.json(invalidNumber(), 400);
+    if (result === null) {
+      return wantsHtml ? c.html(OPT_OUT_ERROR_HTML, 400) : c.json(invalidNumber(), 400);
+    }
 
     // Neutral message whether or not the number was already present: the customer only needs
     // to know they will not receive further messages, and this avoids revealing membership.
+    if (wantsHtml) return c.html(OPT_OUT_RESULT_HTML);
     return c.json({
       ok: true,
       message: "You have been opted out and will not receive further messages.",
     });
   });
+}
+
+/**
+ * Content negotiation for `POST /api/opt-out` (roadmap 11.1.1).
+ *
+ * A plain, zero-JS HTML form post (`Content-Type: application/x-www-form-urlencoded`) has no
+ * `Accept: application/json`, so it gets the human-facing HTML result. The SPA / API callers send
+ * JSON (or an explicit `Accept: application/json`) and keep the JSON contract untouched.
+ */
+function prefersHtml(request: Request): boolean {
+  const accept = request.headers.get("accept") ?? "";
+  if (accept.includes("application/json")) return false;
+  const contentType = request.headers.get("content-type") ?? "";
+  // A form post is the canonical public case; anything JSON-shaped is an API caller.
+  if (contentType.includes("application/json")) return false;
+  return true;
 }
 
 /**

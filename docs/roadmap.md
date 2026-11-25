@@ -491,6 +491,179 @@
 
 ---
 
+## Phase 11 — Review Fixes (security & correctness) ☐ TODO
+
+> **Why this phase exists:** a full read-through review of the shipped Phases 0–10 found a set of
+> real defects that the current test suite does not cover. They are ordered below by severity.
+> Every step is small and self-contained; **11.1–11.3 are the must-fix set** (they touch money,
+> compliance, or the only public route). 11.4–11.8 are correctness/polish and may be split off if
+> the operator prefers.
+>
+> **Design mandate:** keep the changes surgical. Do **not** rewrite the queue flows, the provider
+> layer, or the auth model. The three high-severity steps must each ship **with a regression test**
+> (the suite is at 118 passing; it must stay green and grow).
+
+> **Records to add to `mission.md` §8 in the same change (do not guess):**
+> - **CSRF / same-origin enforcement** for the authenticated `/api/*` surface (currently assumed
+>   away; becomes a resolved decision in 11.2).
+> - **Scheduled-send opt-out re-check** — confirm the mission's intent: the blacklist is
+>   `always stripped from every audience` (tech.md §4). 11.3 makes that true at *send* time, not
+>   only at *create* time; record it as resolved.
+> - **Test-send balance rule** — 11.4 decides whether `POST /api/test-sms` is exempt from the
+>   balance pre-flight (hard rule #9) or not.
+
+### 11.1 ✅ Public opt-out form must return an HTML confirmation, not raw JSON
+
+> **Defect.** `web/public/x.html` (and the byte-identical string in `src/routes/opt-out-page.ts`)
+> is a **zero-JS** form that posts urlencoded to `POST /api/opt-out`. That handler
+> (`src/routes/opt-outs.ts`) **always** returns `c.json(...)`, so a real customer who submits the
+> form sees a raw JSON blob instead of a confirmation. The primary UX path of the only public
+> route is broken for real users.
+
+> **Landed.** `POST /api/opt-out` now content-negotiates via `prefersHtml()`: a plain form post
+> gets `OPT_OUT_RESULT_HTML` (200) or `OPT_OUT_ERROR_HTML` (400); JSON / `Accept: application/json`
+> callers keep the unchanged JSON contract. All three documents share one style block
+> (`OPT_OUT_PAGE_STYLE`), and the success text is neutral (identical whether or not the number was
+> already opted out). Covered by four new tests in `test/phase9_5.test.ts` (suite now 122 green;
+> `npm run typecheck` clean).
+
+- **11.1.1 ✅** In `POST /api/opt-out`, content-negotiate the response: return a small
+  self-contained **HTML confirmation page** when the request is a plain form post (no
+  `Accept: application/json`, or `Content-Type: application/x-www-form-urlencoded`), and keep
+  returning **JSON** for the SPA / `Accept: application/json` callers. Factor the confirmation
+  HTML into a small constant (e.g. `OPT_OUT_RESULT_HTML` in `src/routes/opt-out-page.ts`) so the
+  form-free page and the result page share one style block.
+- **11.1.2 ✅** Keep the message **neutral** (same success text whether or not the number was
+  already opted out) — do not leak membership. On an invalid number return an HTML error page
+  (form-post case) / the existing `400` JSON (API case).
+- **11.1.3 ✅** Extend `test/phase9_5.test.ts`: a urlencoded form post → `200` with
+  `Content-Type: text/html` and the confirmation text; a JSON post → unchanged JSON; an invalid
+  form post → `400` HTML error. **Verified:** `npm test` (122 total) all green;
+  `npm run typecheck` clean.
+
+### 11.2 ☐ CSRF / same-origin protection on mutating routes
+
+> **Defect.** Every state-changing `/api/*` route is protected **only** by the Cloudflare Access
+> cookie; there is **no** CSRF token and **no** `Origin`/`Referer` check anywhere (grep for
+> `Origin`/`csrf`/`SameSite` returns zero hits). A cross-site request riding the Access cookie
+> could trigger a real send — which spends money and cannot be undone.
+
+- **11.2.1 ☐** In the `/api/*` guard (`src/index.ts`, next to `requireAuth`), reject any
+  **unsafe** method (`POST`/`PUT`/`PATCH`/`DELETE`) whose `Origin` header is present **and** does
+  not match the request host — `403 { error: 'cross_origin_blocked' }`. Absent `Origin`
+  (same-origin browsers omit it for simple requests, and tests/non-browser clients may too) is
+  allowed, so this is a cheap, stateless backstop that does not break `curl`/tests.
+- **11.2.2 ☐** Apply the same check to the **public** `/api/opt-out` path (it is also a mutation).
+  Keep it in one helper (e.g. `isSameOrigin(c)` in `src/lib/hardening.ts`) so the rule is stated
+  once.
+- **11.2.3 ☐** Add tests: same-origin POST → allowed; `Origin: https://evil.example` POST → `403`;
+  GET is never blocked; the public form post with the production origin still succeeds.
+  **Verify:** `npm test` green; `npm run typecheck` clean.
+- **11.2.4 ☐** Document in `tech.md` §9 (new sub-point) that the Worker now enforces same-origin
+  on mutations and that this complements (does not replace) Cloudflare Access; record the
+  decision in `mission.md` §8.
+
+### 11.3 ☐ Re-check opt-outs at dispatch time (scheduled sends)
+
+> **Defect.** `loadAudienceChunks` strips opt-outs at **create** time and freezes the stripped
+> list into the queue message. For a **scheduled** campaign, a customer who opts out during the
+> window before the send is **not** re-checked: `handleDispatch` deliberately never re-reads
+> `opt_outs` (`src/queue/dispatch.ts`). This violates the blacklist guarantee
+> (tech.md §4 "Opt-outs"; mission.md §4 item 8, "always stripped from audiences") for the
+> scheduled case — a compliance issue.
+
+- **11.3.1 ☐** In `handleDispatch` (`src/queue/dispatch.ts`), after resolving `recipients` and
+  before the provider call, load a fresh opt-out set (`loadOptOutSet`) and drop any recipient
+  that opted out after the campaign was created. One small query per batch; still far inside D1's
+  per-invocation budget.
+- **11.3.2 ☐** If the fresh list becomes empty, reuse the existing `markFailed` + settle path
+  (the batch is terminal, not retried). Do **not** re-read the raw `audience_chunks` row — the
+  blacklist is the only live input.
+- **11.3.3 ☐** Add a regression test in `test/phase7.test.ts` (or `phase9.test.ts`): create a
+  scheduled campaign, opt a recipient out **after** creation, run the dispatch consumer, and
+  assert the opted-out number is **not** in the provider call and the count is right before the
+  send.
+- **11.3.4 ☐** Update `tech.md` Flow C step 1 and §4 "Opt-outs" to state the blacklist is
+  applied at **both** create and dispatch time. **Verify:** `npm test` green; the provider stub
+  shows the filtered recipient list.
+
+### 11.4 ☐ Test-send balance handling (decide, then align code + docs)
+
+> **Defect.** `POST /api/campaigns` blocks when `balance < credits` (hard rule #9), but
+> `POST /api/test-sms` does **not** check balance at all — a zero-balance operator can still
+> fire test sends (each costs a credit). The doc says "not blocked by balance"; the hard rule
+> says block. Pick one.
+
+- **11.4.1 ☐** Decide (record in `mission.md` §8): **exempt** test sends (document the reason:
+  a single credit, needed to verify copy) **or** apply the same pre-flight as campaigns.
+- **11.4.2 ☐** Implement the chosen rule in `src/routes/test-sms.ts`. If exempt, add a short
+  comment + a doc line in `tech.md` §5; if enforced, reuse the `getBalance` check and return the
+  same `insufficient_balance` shape.
+- **11.4.3 ☐** Test the chosen behavior. **Verify:** `npm test` green; `npm run typecheck` clean.
+
+### 11.5 ☐ `messageBudget` must report the UCS-2 limit when the body flips encoding
+
+> **Defect.** `messageBudget(suffix)` in `src/lib/validate.ts` derives `singleSegmentLimit` from
+> the **suffix's** encoding (always GSM-7 → 160). When an emoji forces the *body* to UCS-2
+> (single-segment cap 70), the "max N characters" hint shown to the operator is computed with
+> the wrong limit. The outer `segments.segments > 1` check still rejects correctly, so this is a
+> **misleading message**, not a correctness hole.
+
+- **11.5.1 ☐** Make the budget reflect the **full message's** detected encoding, or pass the
+  body so the hint matches what will actually be sent. Keep the pure function testable.
+- **11.5.2 ☐** Mirror the change in `web/src/lib/sms.ts` (Phase 8 requires byte-for-byte
+  behavioural parity; `test/phase8.test.ts` enforces it).
+- **11.5.3 ☐** Add/extend a test in `test/phase4.test.ts` + `test/phase8.test.ts` for an
+  emoji body. **Verify:** `npm test` green; `npm run typecheck` + `npm run typecheck:web` clean.
+
+### 11.6 ☐ Move `DELETE /api/opt-outs/:number` off the URL path
+
+> **Defect.** `DELETE /api/opt-outs/:number` (`src/routes/opt-outs.ts`) carries an E.164 number
+> as a path segment. Phone numbers are a poor fit for path identifiers (a literal `+` and other
+> characters are fragile across decoders). The modal happens to send a form that survives, but
+> the contract is brittle.
+
+- **11.6.1 ☐** Accept the number via a JSON body (`DELETE` with `{ number }`) or a query param,
+  normalising through the same service. Keep the old path form working for one release if
+  trivially possible, else update `web/src/api.ts` (`removeOptOut`) in the same change.
+- **11.6.2 ☐** Update `test/phase6.test.ts` (6.7 family) to the new shape. **Verify:**
+  `npm test` green.
+
+### 11.7 ☐ Align `beginCancellation` with its documented pre-condition
+
+> **Defect.** `tech.md` Flow B step 1 says cancel must "verify … `schedule_date` is still in the
+> future"; `beginCancellation` (`src/services/campaigns.ts`) checks **status only**.
+
+- **11.7.1 ☐** Either add the `schedule_date`-in-the-future guard (reject/normalise a past-but-
+  still-`SCHEDULED` campaign) **or** relax the doc to match the code. Choose the behaviour that
+  matches reality (the provider may still accept the `DELETE`), and record it in `tech.md`
+  Flow B. **Verify:** `npm test` green.
+
+### 11.8 ☐ Record an operator identity on each campaign (audit trail)
+
+> **Defect/gap.** `src/lib/auth.ts` resolves the Cloudflare Access identity into
+> `c.get('identity')`, but `getIdentity()` is **never used** — no route reads it, so there is no
+> record of *who* sent a campaign despite the identity being available. (Not a bug; a missed
+> capability and dead code.)
+
+- **11.8.1 ☐** Decide whether an audit trail is in scope (mission.md §4 success criteria). If
+  yes: persist the resolved email on campaign creation (a new nullable `created_by` column via a
+  forwarded migration) and surface it in the detail view. If no: delete the unused `getIdentity`
+  export and note in `tech.md` §9.1 that identity is intentionally not persisted.
+- **11.8.2 ☐** If a column is added, follow the forward-only migration rule (`README.md`
+  Rollback) and update `src/db/schema.ts` + a new migration. **Verify:** `npm test` green;
+  `npx wrangler d1 migrations apply sms-campaigns-db --local` applies cleanly.
+
+### Phase 11 — Verify (automatable)
+
+- `npm test` → existing 118 **plus** the new regression tests, all green.
+- `npm run typecheck` + `npm run typecheck:web` + `npx tsc --noEmit -p test/tsconfig.json` clean.
+- `npm run build` → `web/dist` unchanged in shape (still includes `x.html`).
+- `bash scripts/phase9-smoke.sh` still shows the public opt-out flow moving the count.
+- **No live provider call and no spend at any point.**
+
+---
+
 ## Backlog / Later (only if the mission expands)
 
 - Consume Sendmode **webhooks** for real delivery status (deferred decision, `mission.md` §8.7).

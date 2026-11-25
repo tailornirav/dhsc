@@ -43,7 +43,10 @@ disagree, fix both in the same change.
 > Phase 9.5 public opt-out page (`/x`) are complete (see `docs/roadmap.md`); the remaining Phase 10
 > work is polish/security/deploy, whose automatable checks pass locally and whose live steps
 > (`wrangler secret put`, `wrangler deploy`, a real test SMS) are ops actions. See `README.md` for
-> the runbook.
+> the runbook. **A full code review (Phases 0–10) produced `roadmap.md` Phase 11** — a set of
+> real, unfixed defects (public opt-out form returns JSON, no CSRF/`Origin` check on mutations,
+> opt-outs not re-checked at dispatch for scheduled sends, and others). Phase 11 is the current
+> work; do not report those areas as "done" until it lands.
 
 ---
 

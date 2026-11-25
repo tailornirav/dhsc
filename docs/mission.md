@@ -153,3 +153,17 @@ These are now **settled facts**. Treat them as requirements, not preferences.
 - **Access JWT verification:** do we verify the `Cf-Access-Jwt-Assertion` signature in the
   Worker, or trust the header once Access is confirmed to be the only ingress? (Assumed:
   trust the header, verify later if exposed beyond Access.)
+
+### Open pending Phase 11 (see `roadmap.md` Phase 11 — resolve when each step lands)
+
+- **CSRF / same-origin enforcement (11.2):** the authenticated `/api/*` surface is currently
+  protected by the Cloudflare Access cookie alone. Decision needed: enforce same-origin on
+  unsafe methods in the Worker (recommended) and/or rely on the Access cookie's `SameSite`
+  attribute. Until resolved, treat cross-site mutation as an unmitigated risk.
+- **Scheduled-send opt-out re-check (11.3):** the blacklist is documented as *always* stripped
+  from every audience, but it is currently applied only at **create** time. Decision to confirm:
+  re-check `opt_outs` at **dispatch** time for scheduled campaigns so the guarantee holds at
+  send time too (recommended — it is the compliant reading).
+- **Test-send balance rule (11.4):** hard rule #9 says block a send when the estimate exceeds
+  credit, but `POST /api/test-sms` is currently exempt. Decide whether a test send (1 credit)
+  stays exempt or gets the same pre-flight as a campaign.
