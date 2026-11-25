@@ -288,6 +288,11 @@ test("validateCampaign: rejects empty name, bad sender charset, over-long sender
   assert.equal(badSender.ok, false);
   if (!badSender.ok) assert.equal(badSender.issues[0]?.code, "invalid_charset");
 
+  // A space is valid: the provider allows `[^<>]*` and shows `"SM Testing"` (docs/sms-api.md §5.2).
+  const spacedSender = validateCampaign({ name: "X", senderId: "Dilli Haat", message: "hi", mode: "IMMEDIATE" });
+  assert.equal(spacedSender.ok, true);
+  if (spacedSender.ok) assert.equal(spacedSender.value.senderId, "Dilli Haat");
+
   const longSender = validateCampaign({ name: "X", senderId: "abcdefghijkl", message: "hi", mode: "IMMEDIATE" });
   assert.equal(longSender.ok, false);
   if (!longSender.ok) assert.equal(longSender.issues[0]?.code, "too_long");

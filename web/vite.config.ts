@@ -22,7 +22,8 @@ const WORKER_DEV_ORIGIN = process.env.WORKER_DEV_ORIGIN ?? "http://127.0.0.1:878
  * values baked into the bundle (see `web/src/config.ts`). They are defined here with safe
  * fallbacks so a bare `npm run build` (with no shell env) still produces a configured bundle
  * instead of silently reverting the sender ID to the `DHSC` default. An explicit environment
- * variable still wins, so CI/deploy overrides keep working.
+ * variable still wins, so CI/deploy overrides keep working. The default `"Dilli Haat"` contains a
+ * space, which the sender-ID charset allows.
  */
 const SENDER_ID = process.env.VITE_SENDER_ID ?? "Dilli Haat";
 const ENVIRONMENT = process.env.VITE_ENVIRONMENT ?? "Production";

@@ -84,8 +84,8 @@ irreversible spend. Breaking one silently breaks the product.
    Base URL is `https://sms-rest.sendmode.dev`.
 7. **UK time & 15-min slots.** Picker labelled `Europe/London`; minutes ∈ `00/15/30/45`, `:00`
    seconds; ≥ 20 min lead time; convert to ISO 8601 UTC (`Z`) before POSTing.
-8. **UK sender ID.** Cap at **11** alphanumeric chars in UI validation (provider allows 15).
-   Reject `<`/`>` in `sender_id` and `message`.
+8. **UK sender ID.** Cap at **11** chars in UI validation — letters, digits and spaces
+   (provider allows 15). Reject `<`/`>` in `sender_id` and `message`.
 9. **Show cost before spending.** Live character/segment/credit estimator; block send when the
    estimate exceeds available credit.
 10. **Secrets never in code.** Use `wrangler secret put` / gitignored `.dev.vars`. Never commit

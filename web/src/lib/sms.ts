@@ -18,7 +18,7 @@ export const OPT_OUT_SUFFIX = "Stop: dhsc.uk/x";
 /** Campaign name cap (prototype.md §5.1). */
 export const MAX_NAME_LENGTH = 80;
 
-/** UK sender-ID cap: 11 alphanumeric chars (mission.md §7). */
+/** UK sender-ID cap: 11 chars; letters, digits and spaces (mission.md §7). */
 export const MAX_SENDER_ID_LENGTH = 11;
 
 /** GSM 7-bit default alphabet, basic set (3GPP TS 23.038). */

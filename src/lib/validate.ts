@@ -31,8 +31,17 @@ export const OPT_OUT_SUFFIX = "Stop: dhsc.uk/x";
 /** Campaign name cap (prototype.md §5.1). */
 export const MAX_NAME_LENGTH = 80;
 
-/** UK sender-ID cap: 11 alphanumeric chars (mission.md §7; the provider allows 15). */
+/** UK sender-ID cap: 11 chars (mission.md §7; the provider allows 15). */
 export const MAX_SENDER_ID_LENGTH = 11;
+
+/**
+ * Sender-ID charset: letters, digits, and spaces only.
+ *
+ * The provider's own rule is merely `[^<>]*` (docs/sms-api.md §5.2 shows `"SM Testing"`), so a
+ * space is valid and common in practice. We keep a deliberately narrow charset — alphanumerics
+ * plus spaces — to stay UK-typical, and reject `<`/`>` explicitly.
+ */
+const SENDER_ID_PATTERN = /^[A-Za-z0-9 ]+$/;
 
 /**
  * Provider's absolute API cap for the message field (`docs/sms-api.md` §3). This is the
@@ -177,7 +186,7 @@ export function buildFullMessage(message: string, suffix: string = OPT_OUT_SUFFI
  *
  * Rules enforced (tech.md Flow A step 1, mission.md §8.4):
  *   - `name`: 1–80 chars after trim.
- *   - `senderId`: 1–11 chars, alphanumeric (UK practice), no `<>`.
+ *   - `senderId`: 1–11 chars, letters/digits/spaces (UK practice), no `<>`.
  *   - `message`: 1–1224 chars, no `<>`. **Hard max: the whole outbound body (body + suffix)
  *     must fit 160 chars in GSM-7**, or the UCS-2 equivalent. We reject when the outbound
  *     body needs more than one segment.
@@ -218,15 +227,14 @@ export function validateCampaign(
       code: "too_long",
       message: `Sender ID must be ${MAX_SENDER_ID_LENGTH} characters or fewer.`,
     });
-  } else if (!/^[A-Za-z0-9]+$/.test(senderId)) {
+  } else if (containsAngleBrackets(senderId)) {
+    issues.push({ field: "senderId", code: "angle_brackets", message: "Sender ID cannot contain < or >." });
+  } else if (!SENDER_ID_PATTERN.test(senderId)) {
     issues.push({
       field: "senderId",
       code: "invalid_charset",
-      message: "Sender ID must be alphanumeric only.",
+      message: "Sender ID may only contain letters, numbers and spaces.",
     });
-  } else if (containsAngleBrackets(senderId)) {
-    // Redundant given the alnum check above, but explicit so the rule is never lost.
-    issues.push({ field: "senderId", code: "angle_brackets", message: "Sender ID cannot contain < or >." });
   }
 
   // ---- message ----

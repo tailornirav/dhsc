@@ -5,7 +5,7 @@
  * (mission.md §8.3). It is injected at build time via Vite env vars so no value is hardcoded in
  * a component and the same build shape works for dev and production:
  *
- *   - `VITE_SENDER_ID`    — the registered UK sender ID (≤11 alphanumeric chars).
+ *   - `VITE_SENDER_ID`    — the registered UK sender ID (≤11 chars; letters, digits, spaces).
  *   - `VITE_ENVIRONMENT`  — a label for the header's environment pill (e.g. `Production`).
  *
  * Both have safe defaults so a local `npm run dev` works out of the box. Set them in a
